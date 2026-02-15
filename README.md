@@ -1,0 +1,116 @@
+# Telegram Broker + Home Agent (VPS Middle-Man)
+
+This repo contains two small Go services:
+- `broker`: runs on your VPS, receives Telegram webhooks, authorizes, rate-limits, and forwards allowlisted commands to your home agent.
+- `agent`: runs on your home Ubuntu server, executes allowlisted commands and returns output.
+
+## Quick Architecture
+- Telegram -> VPS Broker (HTTPS webhook or polling)
+- Broker -> Home Agent via reverse SSH tunnel (VPS loopback -> home loopback)
+- Agent executes allowlisted commands only
+
+## Build
+```bash
+go build -o broker ./cmd/broker
+go build -o agent ./cmd/agent
+```
+
+## Config (Do Not Commit Secrets)
+This project uses local JSON configs that include secrets. **Do not commit real tokens or shared secrets.**
+
+Files:
+- `configs/broker.json`
+- `configs/agent.json`
+
+Before running:
+- Replace `CHANGE_ME_BOT_TOKEN` with your Telegram bot token
+- Replace `CHANGE_ME_SHARED_SECRET` with a strong random secret shared between broker and agent
+- Set your `telegram_allowed_user_ids`
+
+Recommended:
+- Keep `configs/*.json` out of version control (use `.gitignore`).
+- Use `.example.json` templates for public repos.
+
+## Polling Mode (No TLS/Domain Needed)
+If you do not have a domain with TLS, set:
+- `configs/broker.json` -> `telegram_mode` = `polling`
+
+In polling mode, the VPS broker calls Telegram `getUpdates` directly. No inbound HTTPS is required.
+
+## Dynamic Commands (Scoped to a Base Directory)
+The agent supports safe, scoped filesystem commands under `base_dir`:
+
+- `pwd` (returns current per-chat directory)
+- `ls`, `ll` (subset of flags allowed)
+- `cat <file>`
+- `cd <dir>` (per-chat working directory)
+
+Configure in `configs/agent.json`:
+- `base_dir`: e.g. `/home/wiraash`
+- `dynamic_allowlist`: e.g. `["ls","ll","cat","pwd","cd"]`
+
+All paths are constrained to `base_dir`. Paths outside it are rejected.
+
+## Systemd (examples)
+- VPS: `systemd/broker.service` (configured for `/home/wiraash/broker`)
+- Home server: `systemd/agent.service`
+- Home server SSH tunnel: `systemd/ssh-tunnel.service`
+
+Adjust:
+- `wiraash@155.94.144.211` (in `systemd/ssh-tunnel.service`)
+- install paths (`/home/wiraash/broker` on VPS, `/opt/personal_ai` on home server)
+- service users as desired
+
+## Reverse SSH Tunnel
+Home server opens:
+```
+ssh -N -R 127.0.0.1:18080:127.0.0.1:8080 vps-user@155.94.144.211
+```
+The broker calls `http://127.0.0.1:18080/command` on the VPS.
+
+Note: This repo config uses the agent on `127.0.0.1:8081`. The tunnel service reflects that.
+
+## Telegram Webhook vs Polling
+If you do not have a domain with TLS, use polling:
+- Set `telegram_mode` to `polling` in `configs/broker.json`.
+- No webhook required.
+
+If you have a domain with TLS, you can use webhooks:
+```
+https://YOUR_VPS_DOMAIN/telegram/webhook
+```
+The broker listens on `telegram_webhook_path` and should be behind TLS (Caddy/Nginx).
+
+## Security Model
+- Allowlist only.
+- Blocklist enforced in both broker and agent.
+- Auth token between broker and agent (`X-Auth-Token`).
+- Rate limits on broker.
+
+## Security Checklist (Before Open-Sourcing)
+- Remove real bot tokens and secrets from configs and history.
+- Add `configs/*.json` to `.gitignore` and provide `configs/*.example.json` instead.
+- Restrict `telegram_allowed_user_ids` to your own user ID(s).
+- Keep `base_dir` as narrow as possible.
+- Avoid enabling broad commands (no arbitrary shell).
+- Keep SSH keys private and unique per machine.
+- Monitor logs on VPS and home server.
+
+## Example Telegram Commands
+```
+status
+disk
+memory
+users
+pwd
+ls
+ll Projects
+cd Projects
+pwd
+cat /home/wiraash/Projects/personal_ai/README.md
+```
+
+## Next Steps
+- Add Google search or other integrations.
+- Add confirmation flow for risky commands.
+- Expand allowlist by adding explicit command mappings in `configs/agent.json`.

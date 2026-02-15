@@ -1,0 +1,31 @@
+{
+  "listen_addr": "127.0.0.1:8081",
+  "auth_token": "CHANGE_ME_SHARED_SECRET",
+  "default_timeout_sec": 10,
+  "max_output_kb": 8,
+  "base_dir": "/home/wiraash",
+  "dynamic_allowlist": ["ls", "ll", "cat", "pwd", "cd"],
+  "command_allowlist": {
+    "status": { "exec": "/usr/bin/uptime", "args": [] },
+    "disk": { "exec": "/bin/df", "args": ["-h"] },
+    "memory": { "exec": "/usr/bin/free", "args": ["-h"] },
+    "users": { "exec": "/usr/bin/who", "args": [] }
+  },
+  "command_blocklist": [
+    "shutdown",
+    "reboot",
+    "adduser",
+    "useradd",
+    "passwd",
+    "usermod",
+    "deluser",
+    "rm",
+    "mkfs",
+    "dd",
+    "mount",
+    "umount",
+    "chmod",
+    "chown",
+    "sudo"
+  ]
+}

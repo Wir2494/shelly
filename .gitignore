@@ -1,0 +1,8 @@
+configs/broker.json
+configs/agent.json
+*.secret
+*.key
+*.pem
+*.env
+agent
+broker

@@ -1,0 +1,29 @@
+{
+  "listen_addr": "127.0.0.1:8081",
+  "telegram_bot_token": "CHANGE_ME_BOT_TOKEN",
+  "telegram_mode": "polling",
+  "telegram_webhook_path": "/telegram/webhook",
+  "telegram_allowed_user_ids": [123456789],
+  "forward_url": "http://127.0.0.1:18080/command",
+  "forward_auth_token": "CHANGE_ME_SHARED_SECRET",
+  "rate_limit_per_minute": 20,
+  "poll_interval_sec": 3,
+  "command_allowlist": ["status", "disk", "memory", "users", "ls", "ll", "cat", "pwd", "cd"],
+  "command_blocklist": [
+    "shutdown",
+    "reboot",
+    "adduser",
+    "useradd",
+    "passwd",
+    "usermod",
+    "deluser",
+    "rm",
+    "mkfs",
+    "dd",
+    "mount",
+    "umount",
+    "chmod",
+    "chown",
+    "sudo"
+  ]
+}

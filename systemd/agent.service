@@ -1,0 +1,19 @@
+[Unit]
+Description=Home Agent Service
+After=network.target
+
+[Service]
+Type=simple
+User=wiraash
+WorkingDirectory=/home/wiraash/Projects/personal_ai
+ExecStart=/home/wiraash/Projects/personal_ai/agent -config /home/wiraash/Projects/personal_ai/configs/agent.json
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/wiraash/Projects/personal_ai
+
+[Install]
+WantedBy=multi-user.target
