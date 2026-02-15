@@ -6,3 +6,4 @@ configs/agent.json
 *.env
 agent
 broker
+systemd/ssh-tunnel.service

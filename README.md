@@ -54,17 +54,17 @@ All paths are constrained to `base_dir`. Paths outside it are rejected.
 ## Systemd (examples)
 - VPS: `systemd/broker.service` (configured for `/home/wiraash/broker`)
 - Home server: `systemd/agent.service`
-- Home server SSH tunnel: `systemd/ssh-tunnel.service`
+- Home server SSH tunnel: `systemd/ssh-tunnel.service.example` (copy to `/etc/systemd/system/ssh-tunnel.service` and fill in your host/user)
 
 Adjust:
-- `wiraash@155.94.144.211` (in `systemd/ssh-tunnel.service`)
+- `USER@VPS_HOST` (in `systemd/ssh-tunnel.service`)
 - install paths (`/home/wiraash/broker` on VPS, `/opt/personal_ai` on home server)
 - service users as desired
 
 ## Reverse SSH Tunnel
 Home server opens:
 ```
-ssh -N -R 127.0.0.1:18080:127.0.0.1:8080 vps-user@155.94.144.211
+ssh -N -R 127.0.0.1:18080:127.0.0.1:8080 USER@VPS_HOST
 ```
 The broker calls `http://127.0.0.1:18080/command` on the VPS.
 
