@@ -15,21 +15,22 @@ go build -o broker ./cmd/broker
 go build -o agent ./cmd/agent
 ```
 
-## Config (Do Not Commit Secrets)
-This project uses local JSON configs that include secrets. **Do not commit real tokens or shared secrets.**
+## Config
 
-Files:
+Create local configs from the examples:
+```
+cp configs/broker.example.json configs/broker.json
+cp configs/agent.example.json configs/agent.json
+```
+
+Then edit:
 - `configs/broker.json`
+  - `telegram_bot_token`
+  - `telegram_allowed_user_ids`
+  - `forward_auth_token`
 - `configs/agent.json`
-
-Before running:
-- Replace `CHANGE_ME_BOT_TOKEN` with your Telegram bot token
-- Replace `CHANGE_ME_SHARED_SECRET` with a strong random secret shared between broker and agent
-- Set your `telegram_allowed_user_ids`
-
-Recommended:
-- Keep `configs/*.json` out of version control (use `.gitignore`).
-- Use `.example.json` templates for public repos.
+  - `auth_token` (must match `forward_auth_token`)
+  - `base_dir`
 
 ## Polling Mode (No TLS/Domain Needed)
 If you do not have a domain with TLS, set:
