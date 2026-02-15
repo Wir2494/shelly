@@ -46,19 +46,19 @@ The agent supports safe, scoped filesystem commands under `base_dir`:
 - `cd <dir>` (per-chat working directory)
 
 Configure in `configs/agent.json`:
-- `base_dir`: e.g. `/home/wiraash`
+- `base_dir`: e.g. `/home/wir`
 - `dynamic_allowlist`: e.g. `["ls","ll","cat","pwd","cd"]`
 
 All paths are constrained to `base_dir`. Paths outside it are rejected.
 
 ## Systemd (examples)
-- VPS: `systemd/broker.service` (configured for `/home/wiraash/broker`)
+- VPS: `systemd/broker.service` (configured for `/home/wir/broker`)
 - Home server: `systemd/agent.service`
 - Home server SSH tunnel: `systemd/ssh-tunnel.service.example` (copy to `/etc/systemd/system/ssh-tunnel.service` and fill in your host/user)
 
 Adjust:
 - `USER@VPS_HOST` (in `systemd/ssh-tunnel.service`)
-- install paths (`/home/wiraash/broker` on VPS, `/opt/personal_ai` on home server)
+- install paths (`/home/wir/broker` on VPS, `/opt/personal_ai` on home server)
 - service users as desired
 
 ## Reverse SSH Tunnel
@@ -87,15 +87,6 @@ The broker listens on `telegram_webhook_path` and should be behind TLS (Caddy/Ng
 - Auth token between broker and agent (`X-Auth-Token`).
 - Rate limits on broker.
 
-## Security Checklist (Before Open-Sourcing)
-- Remove real bot tokens and secrets from configs and history.
-- Add `configs/*.json` to `.gitignore` and provide `configs/*.example.json` instead.
-- Restrict `telegram_allowed_user_ids` to your own user ID(s).
-- Keep `base_dir` as narrow as possible.
-- Avoid enabling broad commands (no arbitrary shell).
-- Keep SSH keys private and unique per machine.
-- Monitor logs on VPS and home server.
-
 ## Example Telegram Commands
 ```
 status
@@ -107,10 +98,5 @@ ls
 ll Projects
 cd Projects
 pwd
-cat /home/wiraash/Projects/personal_ai/README.md
+cat /home/wir/Projects/personal_ai/README.md
 ```
-
-## Next Steps
-- Add Google search or other integrations.
-- Add confirmation flow for risky commands.
-- Expand allowlist by adding explicit command mappings in `configs/agent.json`.
