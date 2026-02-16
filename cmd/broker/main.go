@@ -412,7 +412,7 @@ func mapWithLLM(cfg *BrokerConfig, userText string) (*LLMDecision, error) {
 	}
 	model := cfg.LLMModel
 	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
+		model = "gpt-5.2"
 	}
 
 	systemPrompt := "You are a command router. Decide whether the user wants to run an allowed command or just chat. " +
@@ -438,31 +438,28 @@ func mapWithLLM(cfg *BrokerConfig, userText string) (*LLMDecision, error) {
 		"text": map[string]any{
 			"format": map[string]any{
 				"type": "json_schema",
-				"json_schema": map[string]any{
-					"name":   "telegram_intent",
-					"strict": true,
-					"schema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"type": map[string]any{
-								"type": "string",
-								"enum": []string{"command", "chat"},
-							},
-							"intent": map[string]any{"type": "string"},
-							"args": map[string]any{
-								"type":  "array",
-								"items": map[string]any{"type": "string"},
-							},
-							"response": map[string]any{"type": "string"},
-							"confidence": map[string]any{
-								"type":    "number",
-								"minimum": 0,
-								"maximum": 1,
-							},
+				"name": "telegram_intent",
+				"schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"type": map[string]any{
+							"type": "string",
+							"enum": []string{"command", "chat"},
 						},
-						"required":             []string{"type", "intent", "args", "response", "confidence"},
-						"additionalProperties": false,
+						"intent": map[string]any{"type": "string"},
+						"args": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"type": "string"},
+						},
+						"response": map[string]any{"type": "string"},
+						"confidence": map[string]any{
+							"type":    "number",
+							"minimum": 0,
+							"maximum": 1,
+						},
 					},
+					"required":             []string{"type", "intent", "args", "response", "confidence"},
+					"additionalProperties": false,
 				},
 			},
 		},
