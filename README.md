@@ -28,6 +28,7 @@ Then edit:
   - `telegram_bot_token`
   - `telegram_allowed_user_ids`
   - `forward_auth_token`
+  - `llm_enabled`, `llm_api_key`, `llm_model` (optional, for natural language; use a model that supports JSON schema outputs)
 - `configs/agent.json`
   - `auth_token` (must match `forward_auth_token`)
   - `base_dir`

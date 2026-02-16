@@ -15,17 +15,22 @@ import (
 )
 
 type BrokerConfig struct {
-	ListenAddr            string   `json:"listen_addr"`
-	TelegramBotToken      string   `json:"telegram_bot_token"`
-	TelegramMode          string   `json:"telegram_mode"`
-	TelegramWebhookPath   string   `json:"telegram_webhook_path"`
-	TelegramAllowedUserIDs []int64 `json:"telegram_allowed_user_ids"`
-	ForwardURL            string   `json:"forward_url"`
-	ForwardAuthToken      string   `json:"forward_auth_token"`
-	RateLimitPerMinute    int      `json:"rate_limit_per_minute"`
-	CommandAllowlist      []string `json:"command_allowlist"`
-	CommandBlocklist      []string `json:"command_blocklist"`
-	PollIntervalSec       int      `json:"poll_interval_sec"`
+	ListenAddr             string   `json:"listen_addr"`
+	TelegramBotToken       string   `json:"telegram_bot_token"`
+	TelegramMode           string   `json:"telegram_mode"`
+	TelegramWebhookPath    string   `json:"telegram_webhook_path"`
+	TelegramAllowedUserIDs []int64  `json:"telegram_allowed_user_ids"`
+	ForwardURL             string   `json:"forward_url"`
+	ForwardAuthToken       string   `json:"forward_auth_token"`
+	RateLimitPerMinute     int      `json:"rate_limit_per_minute"`
+	CommandAllowlist       []string `json:"command_allowlist"`
+	CommandBlocklist       []string `json:"command_blocklist"`
+	PollIntervalSec        int      `json:"poll_interval_sec"`
+	LLMEnabled             bool     `json:"llm_enabled"`
+	LLMAPIKey              string   `json:"llm_api_key"`
+	LLMModel               string   `json:"llm_model"`
+	LLMTimeoutSec          int      `json:"llm_timeout_sec"`
+	LLMConfidenceThreshold float64  `json:"llm_confidence_threshold"`
 }
 
 type TelegramUpdate struct {
@@ -39,11 +44,11 @@ type TelegramUpdatesResponse struct {
 }
 
 type TelegramMessage struct {
-	MessageID int64         `json:"message_id"`
-	From      TelegramUser  `json:"from"`
-	Chat      TelegramChat  `json:"chat"`
-	Date      int64         `json:"date"`
-	Text      string        `json:"text"`
+	MessageID int64        `json:"message_id"`
+	From      TelegramUser `json:"from"`
+	Chat      TelegramChat `json:"chat"`
+	Date      int64        `json:"date"`
+	Text      string       `json:"text"`
 }
 
 type TelegramUser struct {
@@ -58,10 +63,10 @@ type TelegramChat struct {
 }
 
 type CommandRequest struct {
-	Command string `json:"command"`
-	UserID  int64  `json:"user_id"`
-	ChatID  int64  `json:"chat_id"`
-	Text    string `json:"text"`
+	Command string   `json:"command"`
+	UserID  int64    `json:"user_id"`
+	ChatID  int64    `json:"chat_id"`
+	Text    string   `json:"text"`
 	Args    []string `json:"args"`
 }
 
@@ -71,6 +76,14 @@ type CommandResponse struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	Error    string `json:"error"`
+}
+
+type LLMDecision struct {
+	Type       string   `json:"type"`
+	Intent     string   `json:"intent"`
+	Args       []string `json:"args"`
+	Response   string   `json:"response"`
+	Confidence float64  `json:"confidence"`
 }
 
 type rateLimiter struct {
@@ -132,6 +145,12 @@ func loadConfig(path string) (*BrokerConfig, error) {
 	}
 	if cfg.PollIntervalSec <= 0 {
 		cfg.PollIntervalSec = 3
+	}
+	if cfg.LLMTimeoutSec <= 0 {
+		cfg.LLMTimeoutSec = 15
+	}
+	if cfg.LLMConfidenceThreshold <= 0 {
+		cfg.LLMConfidenceThreshold = 0.7
 	}
 	return &cfg, nil
 }
@@ -233,11 +252,62 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, update TelegramUpdate) {
 		return
 	}
 
-		cmd, args := normalizeCommand(msg.Text)
-		if cmd == "" {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Empty command.")
+	if cfg.LLMEnabled {
+		decision, err := mapWithLLM(cfg, msg.Text)
+		if err != nil {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "LLM error: "+err.Error())
 			return
 		}
+
+		if strings.EqualFold(decision.Type, "chat") {
+			if strings.TrimSpace(decision.Response) == "" {
+				_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "I didn't understand that. Try a command or ask again.")
+			} else {
+				_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, decision.Response)
+			}
+			return
+		}
+
+		cmd := strings.ToLower(strings.TrimSpace(decision.Intent))
+		if cmd == "" {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "I couldn't determine a command. Try again.")
+			return
+		}
+		if decision.Confidence < cfg.LLMConfidenceThreshold {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "I am not confident this is a command. Please rephrase or use a direct command.")
+			return
+		}
+		if cmd == "help" {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Allowed commands: "+strings.Join(cfg.CommandAllowlist, ", "))
+			return
+		}
+		if isCommandBlocked(cmd, cfg.CommandBlocklist) {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Command blocked.")
+			return
+		}
+		if !isCommandAllowed(cmd, cfg.CommandAllowlist) {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Command not allowed.")
+			return
+		}
+
+		resp, err := forwardCommand(cfg, CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: decision.Args})
+		if err != nil {
+			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
+			return
+		}
+
+		reply := renderResponse(cmd, resp)
+		if err := sendTelegramMessage(cfg.TelegramBotToken, chatID, reply); err != nil {
+			log.Printf("send telegram: %v", err)
+		}
+		return
+	}
+
+	cmd, args := normalizeCommand(msg.Text)
+	if cmd == "" {
+		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Empty command.")
+		return
+	}
 	if cmd == "help" {
 		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Allowed commands: "+strings.Join(cfg.CommandAllowlist, ", "))
 		return
@@ -251,7 +321,7 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, update TelegramUpdate) {
 		return
 	}
 
-		resp, err := forwardCommand(cfg, CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
+	resp, err := forwardCommand(cfg, CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
 	if err != nil {
 		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
 		return
@@ -288,8 +358,8 @@ func pollLoop(cfg *BrokerConfig, rl *rateLimiter) {
 func getUpdates(client *http.Client, token string, offset int64) ([]TelegramUpdate, error) {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", token)
 	payload := map[string]any{
-		"offset":         offset,
-		"timeout":        30,
+		"offset":          offset,
+		"timeout":         30,
 		"allowed_updates": []string{"message"},
 	}
 	body, _ := json.Marshal(payload)
@@ -334,6 +404,128 @@ func normalizeCommand(text string) (string, []string) {
 		return cmd, nil
 	}
 	return cmd, parts[1:]
+}
+
+func mapWithLLM(cfg *BrokerConfig, userText string) (*LLMDecision, error) {
+	if strings.TrimSpace(cfg.LLMAPIKey) == "" {
+		return nil, fmt.Errorf("llm_api_key is not set")
+	}
+	model := cfg.LLMModel
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-4o-mini"
+	}
+
+	systemPrompt := "You are a command router. Decide whether the user wants to run an allowed command or just chat. " +
+		"If it is a command, map it to one of these intents: " + strings.Join(cfg.CommandAllowlist, ", ") + ". " +
+		"Return JSON only that matches the provided schema. If it is chat, respond in the 'response' field."
+
+	reqBody := map[string]any{
+		"model": model,
+		"input": []any{
+			map[string]any{
+				"role": "system",
+				"content": []any{
+					map[string]any{"type": "input_text", "text": systemPrompt},
+				},
+			},
+			map[string]any{
+				"role": "user",
+				"content": []any{
+					map[string]any{"type": "input_text", "text": userText},
+				},
+			},
+		},
+		"text": map[string]any{
+			"format": map[string]any{
+				"type": "json_schema",
+				"json_schema": map[string]any{
+					"name":   "telegram_intent",
+					"strict": true,
+					"schema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"type": map[string]any{
+								"type": "string",
+								"enum": []string{"command", "chat"},
+							},
+							"intent": map[string]any{"type": "string"},
+							"args": map[string]any{
+								"type":  "array",
+								"items": map[string]any{"type": "string"},
+							},
+							"response": map[string]any{"type": "string"},
+							"confidence": map[string]any{
+								"type":    "number",
+								"minimum": 0,
+								"maximum": 1,
+							},
+						},
+						"required":             []string{"type", "intent", "args", "response", "confidence"},
+						"additionalProperties": false,
+					},
+				},
+			},
+		},
+	}
+
+	payload, _ := json.Marshal(reqBody)
+	req, err := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", bytes.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.LLMAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: time.Duration(cfg.LLMTimeoutSec) * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<12))
+		return nil, fmt.Errorf("llm status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+
+	var parsed struct {
+		Output []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Status  string `json:"status"`
+			Content []struct {
+				Type    string `json:"type"`
+				Text    string `json:"text"`
+				Refusal string `json:"refusal"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, err
+	}
+
+	for _, out := range parsed.Output {
+		if out.Type != "message" {
+			continue
+		}
+		for _, c := range out.Content {
+			if c.Type == "output_text" && strings.TrimSpace(c.Text) != "" {
+				var decision LLMDecision
+				if err := json.Unmarshal([]byte(c.Text), &decision); err != nil {
+					return nil, fmt.Errorf("llm json parse error: %v", err)
+				}
+				return &decision, nil
+			}
+			if c.Type == "refusal" && strings.TrimSpace(c.Refusal) != "" {
+				return nil, fmt.Errorf("llm refused: %s", c.Refusal)
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("llm returned no usable output")
 }
 
 func forwardCommand(cfg *BrokerConfig, req CommandRequest) (*CommandResponse, error) {

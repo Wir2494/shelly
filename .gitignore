@@ -4,6 +4,6 @@ configs/agent.json
 *.key
 *.pem
 *.env
-agent
-broker
+/agent
+/broker
 systemd/ssh-tunnel.service
