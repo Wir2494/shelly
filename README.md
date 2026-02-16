@@ -89,6 +89,27 @@ The broker listens on `telegram_webhook_path` and should be behind TLS (Caddy/Ng
 - Auth token between broker and agent (`X-Auth-Token`).
 - Rate limits on broker.
 
+## LLM Command Routing (Optional)
+The broker can map natural language into allowed commands using an LLM.
+When enabled, the broker sends the user text to the OpenAI Responses API and expects a
+JSON schema response that classifies the message as either:
+- `command` with `intent` and `args`
+- `chat` with a `response`
+
+If the returned `confidence` is below `llm_confidence_threshold`, the broker will ask
+the user to rephrase or use a direct command.
+
+Configure in `configs/broker.json`:
+- `llm_enabled`: set to `true`
+- `llm_api_key`: your OpenAI API key
+- `llm_model`: model name (default `gpt-5.2`)
+- `llm_timeout_sec`: request timeout (default `15`)
+- `llm_confidence_threshold`: minimum confidence (default `0.7`)
+
+Notes:
+- LLM routing only maps to the existing `command_allowlist`.
+- If LLM fails or returns invalid JSON, the broker replies with an error.
+
 ## Example Telegram Commands
 ```
 status
