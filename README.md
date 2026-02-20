@@ -1,12 +1,13 @@
 # Telegram Broker + Home Agent (VPS Middle-Man)
 
 This repo contains two small Go services:
-- `broker`: runs on your VPS, receives Telegram webhooks, authorizes, rate-limits, and forwards allowlisted commands to your home agent.
-- `agent`: runs on your home Ubuntu server, executes allowlisted commands and returns output.
+- `broker`: talks to Telegram, authorizes, rate-limits, and either executes allowlisted commands locally or forwards them to a home agent.
+- `agent`: optional. Runs on your home server, executes allowlisted commands and returns output.
 
 ## Quick Architecture
-- Telegram -> VPS Broker (HTTPS webhook or polling)
-- Broker -> Home Agent via reverse SSH tunnel (VPS loopback -> home loopback)
+- Telegram -> Broker (polling or webhook)
+- Broker -> local execution (single-host mode)
+- OR Broker -> Home Agent via reverse SSH tunnel (VPS loopback -> home loopback)
 - Agent executes allowlisted commands only
 
 ## Build
@@ -27,7 +28,9 @@ Then edit:
 - `configs/broker.json`
   - `telegram_bot_token`
   - `telegram_allowed_user_ids`
-  - `forward_auth_token`
+  - `execution_mode` (`local` or `forward`)
+  - `forward_auth_token` (only for `forward` mode)
+  - `local_command_allowlist`, `local_dynamic_allowlist`, `local_base_dir` (for `local` mode)
   - `llm_enabled`, `llm_api_key`, `llm_model` (optional, for natural language; use a model that supports JSON schema outputs)
 - `configs/agent.json`
   - `auth_token` (must match `forward_auth_token`)
@@ -39,8 +42,16 @@ If you do not have a domain with TLS, set:
 
 In polling mode, the VPS broker calls Telegram `getUpdates` directly. No inbound HTTPS is required.
 
+## Simplified Single-Host Mode (No VPS Needed)
+Run only the broker on your home server:
+- `execution_mode` = `local`
+- `forward_url` can be empty
+- Configure `local_command_allowlist`, `local_dynamic_allowlist`, `local_base_dir`
+
+In this mode, the broker polls Telegram and executes commands locally.
+
 ## Dynamic Commands (Scoped to a Base Directory)
-The agent supports safe, scoped filesystem commands under `base_dir`:
+The local executor (or agent) supports safe, scoped filesystem commands under `base_dir`:
 
 - `pwd` (returns current per-chat directory)
 - `ls`, `ll` (subset of flags allowed)

@@ -9,28 +9,35 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
 
 type BrokerConfig struct {
-	ListenAddr             string   `json:"listen_addr"`
-	TelegramBotToken       string   `json:"telegram_bot_token"`
-	TelegramMode           string   `json:"telegram_mode"`
-	TelegramWebhookPath    string   `json:"telegram_webhook_path"`
-	TelegramAllowedUserIDs []int64  `json:"telegram_allowed_user_ids"`
-	ForwardURL             string   `json:"forward_url"`
-	ForwardAuthToken       string   `json:"forward_auth_token"`
-	RateLimitPerMinute     int      `json:"rate_limit_per_minute"`
-	CommandAllowlist       []string `json:"command_allowlist"`
-	CommandBlocklist       []string `json:"command_blocklist"`
-	PollIntervalSec        int      `json:"poll_interval_sec"`
-	LLMEnabled             bool     `json:"llm_enabled"`
-	LLMAPIKey              string   `json:"llm_api_key"`
-	LLMModel               string   `json:"llm_model"`
-	LLMTimeoutSec          int      `json:"llm_timeout_sec"`
-	LLMConfidenceThreshold float64  `json:"llm_confidence_threshold"`
+	ListenAddr             string                    `json:"listen_addr"`
+	TelegramBotToken       string                    `json:"telegram_bot_token"`
+	TelegramMode           string                    `json:"telegram_mode"`
+	TelegramWebhookPath    string                    `json:"telegram_webhook_path"`
+	TelegramAllowedUserIDs []int64                   `json:"telegram_allowed_user_ids"`
+	ExecutionMode          string                    `json:"execution_mode"`
+	ForwardURL             string                    `json:"forward_url"`
+	ForwardAuthToken       string                    `json:"forward_auth_token"`
+	RateLimitPerMinute     int                       `json:"rate_limit_per_minute"`
+	CommandAllowlist       []string                  `json:"command_allowlist"`
+	CommandBlocklist       []string                  `json:"command_blocklist"`
+	PollIntervalSec        int                       `json:"poll_interval_sec"`
+	LLMEnabled             bool                      `json:"llm_enabled"`
+	LLMAPIKey              string                    `json:"llm_api_key"`
+	LLMModel               string                    `json:"llm_model"`
+	LLMTimeoutSec          int                       `json:"llm_timeout_sec"`
+	LLMConfidenceThreshold float64                   `json:"llm_confidence_threshold"`
+	LocalDefaultTimeoutSec int                       `json:"local_default_timeout_sec"`
+	LocalMaxOutputKB       int                       `json:"local_max_output_kb"`
+	LocalCommandAllowlist  map[string]AllowedCommand `json:"local_command_allowlist"`
+	LocalDynamicAllowlist  []string                  `json:"local_dynamic_allowlist"`
+	LocalBaseDir           string                    `json:"local_base_dir"`
 }
 
 type TelegramUpdate struct {
@@ -140,6 +147,13 @@ func loadConfig(path string) (*BrokerConfig, error) {
 	if cfg.TelegramWebhookPath == "" {
 		cfg.TelegramWebhookPath = "/telegram/webhook"
 	}
+	if cfg.ExecutionMode == "" {
+		if strings.TrimSpace(cfg.ForwardURL) == "" {
+			cfg.ExecutionMode = "local"
+		} else {
+			cfg.ExecutionMode = "forward"
+		}
+	}
 	if cfg.RateLimitPerMinute <= 0 {
 		cfg.RateLimitPerMinute = 20
 	}
@@ -152,7 +166,32 @@ func loadConfig(path string) (*BrokerConfig, error) {
 	if cfg.LLMConfidenceThreshold <= 0 {
 		cfg.LLMConfidenceThreshold = 0.7
 	}
+	if cfg.LocalDefaultTimeoutSec <= 0 {
+		cfg.LocalDefaultTimeoutSec = 10
+	}
+	if cfg.LocalMaxOutputKB <= 0 {
+		cfg.LocalMaxOutputKB = 8
+	}
+	if len(cfg.CommandAllowlist) == 0 && (len(cfg.LocalCommandAllowlist) > 0 || len(cfg.LocalDynamicAllowlist) > 0) {
+		cfg.CommandAllowlist = buildAllowlistFromLocal(cfg.LocalCommandAllowlist, cfg.LocalDynamicAllowlist)
+	}
 	return &cfg, nil
+}
+
+func buildAllowlistFromLocal(static map[string]AllowedCommand, dynamic []string) []string {
+	seen := make(map[string]struct{})
+	for name := range static {
+		seen[strings.ToLower(name)] = struct{}{}
+	}
+	for _, name := range dynamic {
+		seen[strings.ToLower(name)] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func isAllowed(userID int64, allowed []int64) bool {
@@ -182,6 +221,36 @@ func isCommandBlocked(cmd string, block []string) bool {
 	return false
 }
 
+type commandExecutor func(req CommandRequest) (*CommandResponse, error)
+
+func validateExecutionConfig(cfg *BrokerConfig) error {
+	mode := strings.ToLower(strings.TrimSpace(cfg.ExecutionMode))
+	switch mode {
+	case "local":
+		if len(cfg.LocalCommandAllowlist) == 0 && len(cfg.LocalDynamicAllowlist) == 0 {
+			return fmt.Errorf("local mode requires local_command_allowlist or local_dynamic_allowlist")
+		}
+	case "forward":
+		if strings.TrimSpace(cfg.ForwardURL) == "" {
+			return fmt.Errorf("forward_url required when execution_mode is forward")
+		}
+	default:
+		return fmt.Errorf("unsupported execution_mode: %s", cfg.ExecutionMode)
+	}
+	return nil
+}
+
+func buildExecutor(cfg *BrokerConfig) commandExecutor {
+	mode := strings.ToLower(strings.TrimSpace(cfg.ExecutionMode))
+	if mode == "local" {
+		local := newLocalExecutor(cfg)
+		return local.Execute
+	}
+	return func(req CommandRequest) (*CommandResponse, error) {
+		return forwardCommand(cfg, req)
+	}
+}
+
 func main() {
 	configPath := flag.String("config", "configs/broker.json", "path to broker config json")
 	flag.Parse()
@@ -190,13 +259,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	if err := validateExecutionConfig(cfg); err != nil {
+		log.Fatalf("config validation: %v", err)
+	}
 
 	rl := newRateLimiter(time.Minute, cfg.RateLimitPerMinute)
+	exec := buildExecutor(cfg)
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.TelegramMode))
 	if mode == "polling" {
 		log.Printf("broker starting in polling mode")
-		pollLoop(cfg, rl)
+		pollLoop(cfg, rl, exec)
 		return
 	}
 
@@ -217,7 +290,7 @@ func main() {
 			return
 		}
 
-		processUpdate(cfg, rl, update)
+		processUpdate(cfg, rl, exec, update)
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -233,7 +306,7 @@ func main() {
 	}
 }
 
-func processUpdate(cfg *BrokerConfig, rl *rateLimiter, update TelegramUpdate) {
+func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, update TelegramUpdate) {
 	if update.Message == nil {
 		return
 	}
@@ -290,7 +363,7 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, update TelegramUpdate) {
 			return
 		}
 
-		resp, err := forwardCommand(cfg, CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: decision.Args})
+		resp, err := exec(CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: decision.Args})
 		if err != nil {
 			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
 			return
@@ -321,7 +394,7 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, update TelegramUpdate) {
 		return
 	}
 
-	resp, err := forwardCommand(cfg, CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
+	resp, err := exec(CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
 	if err != nil {
 		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
 		return
@@ -333,7 +406,7 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, update TelegramUpdate) {
 	}
 }
 
-func pollLoop(cfg *BrokerConfig, rl *rateLimiter) {
+func pollLoop(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor) {
 	client := &http.Client{Timeout: 35 * time.Second}
 	var offset int64
 	for {
@@ -344,7 +417,7 @@ func pollLoop(cfg *BrokerConfig, rl *rateLimiter) {
 			continue
 		}
 		for _, upd := range updates {
-			processUpdate(cfg, rl, upd)
+			processUpdate(cfg, rl, exec, upd)
 			if upd.UpdateID >= offset {
 				offset = upd.UpdateID + 1
 			}
