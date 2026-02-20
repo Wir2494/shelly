@@ -10,3 +10,5 @@ Steps performed:
 7. Added tests for local execution in cmd/broker/local_exec_test.go.
 8. Ran gofmt on modified Go files.
 9. Ran go test ./... (required escalated permissions due to Go build cache location).
+10. Committed changes to git (commit: "Add local execution mode to broker").
+11. Attempted to push to origin main; failed due to DNS/host resolution (github.com not reachable from this environment).
