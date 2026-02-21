@@ -162,3 +162,42 @@ func TestPipelineLLMChatSkipsExecution(t *testing.T) {
 		t.Fatalf("unexpected response: %v", sender.calls)
 	}
 }
+
+func TestPipelinePingBypassesLLM(t *testing.T) {
+	cfg := &BrokerConfig{
+		Telegram: TelegramConfig{
+			BotToken:       "token",
+			AllowedUserIDs: []int64{1},
+		},
+		LLM: LLMConfig{
+			Enabled: true,
+		},
+		Policy: PolicyConfig{
+			CommandAllowlist: []string{"ping"},
+		},
+	}
+	rl := newRateLimiter(time.Minute, 0)
+	called := false
+	exec := executorStub(func(req api.CommandRequest) (*api.CommandResponse, error) {
+		called = true
+		return &api.CommandResponse{Ok: true, ExitCode: 0, Stdout: "pong"}, nil
+	})
+	sender := &senderStub{}
+	llm := &llmStub{decision: &api.LLMDecision{Type: "chat", Response: "no", Confidence: 1}}
+	broker := newBroker(cfg, rl, exec, sender, llm, nil)
+
+	update := TelegramUpdate{Message: &TelegramMessage{
+		From: TelegramUser{ID: 1},
+		Chat: TelegramChat{ID: 99},
+		Text: "ping google.com",
+	}}
+
+	broker.processUpdate(update)
+
+	if !called {
+		t.Fatalf("expected executor to be called")
+	}
+	if llm.calls != 0 {
+		t.Fatalf("expected llm not to be called")
+	}
+}

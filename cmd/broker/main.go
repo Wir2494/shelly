@@ -419,6 +419,12 @@ func stageRateLimit(ctx *pipelineContext) bool {
 }
 
 func stageRoute(ctx *pipelineContext) bool {
+	if cmd, args, ok := parseDirectCommand(ctx.msg.Text, ctx.cfg.Policy.CommandAllowlist); ok && cmd == "ping" {
+		ctx.cmd = cmd
+		ctx.args = args
+		logAudit(ctx, "command", "direct ping bypass", "ok")
+		return false
+	}
 	if ctx.cfg.LLM.Enabled {
 		if ctx.llm == nil {
 			logAudit(ctx, "llm_error", "llm client not configured", "error")
@@ -528,6 +534,17 @@ func logAudit(ctx *pipelineContext, eventType, message, outcome string) {
 		Outcome:   outcome,
 		Message:   message,
 	})
+}
+
+func parseDirectCommand(text string, allowlist []string) (string, []string, bool) {
+	cmd, args := normalizeCommand(text)
+	if cmd == "" {
+		return "", nil, false
+	}
+	if !isCommandAllowed(cmd, allowlist) {
+		return "", nil, false
+	}
+	return cmd, args, true
 }
 
 func (b *Broker) pollLoop() {
