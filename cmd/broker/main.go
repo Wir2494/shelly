@@ -13,31 +13,33 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"personal_ai/internal/api"
 )
 
 type BrokerConfig struct {
-	ListenAddr             string                    `json:"listen_addr"`
-	TelegramBotToken       string                    `json:"telegram_bot_token"`
-	TelegramMode           string                    `json:"telegram_mode"`
-	TelegramWebhookPath    string                    `json:"telegram_webhook_path"`
-	TelegramAllowedUserIDs []int64                   `json:"telegram_allowed_user_ids"`
-	ExecutionMode          string                    `json:"execution_mode"`
-	ForwardURL             string                    `json:"forward_url"`
-	ForwardAuthToken       string                    `json:"forward_auth_token"`
-	RateLimitPerMinute     int                       `json:"rate_limit_per_minute"`
-	CommandAllowlist       []string                  `json:"command_allowlist"`
-	CommandBlocklist       []string                  `json:"command_blocklist"`
-	PollIntervalSec        int                       `json:"poll_interval_sec"`
-	LLMEnabled             bool                      `json:"llm_enabled"`
-	LLMAPIKey              string                    `json:"llm_api_key"`
-	LLMModel               string                    `json:"llm_model"`
-	LLMTimeoutSec          int                       `json:"llm_timeout_sec"`
-	LLMConfidenceThreshold float64                   `json:"llm_confidence_threshold"`
-	LocalDefaultTimeoutSec int                       `json:"local_default_timeout_sec"`
-	LocalMaxOutputKB       int                       `json:"local_max_output_kb"`
-	LocalCommandAllowlist  map[string]AllowedCommand `json:"local_command_allowlist"`
-	LocalDynamicAllowlist  []string                  `json:"local_dynamic_allowlist"`
-	LocalBaseDir           string                    `json:"local_base_dir"`
+	ListenAddr             string                        `json:"listen_addr"`
+	TelegramBotToken       string                        `json:"telegram_bot_token"`
+	TelegramMode           string                        `json:"telegram_mode"`
+	TelegramWebhookPath    string                        `json:"telegram_webhook_path"`
+	TelegramAllowedUserIDs []int64                       `json:"telegram_allowed_user_ids"`
+	ExecutionMode          string                        `json:"execution_mode"`
+	ForwardURL             string                        `json:"forward_url"`
+	ForwardAuthToken       string                        `json:"forward_auth_token"`
+	RateLimitPerMinute     int                           `json:"rate_limit_per_minute"`
+	CommandAllowlist       []string                      `json:"command_allowlist"`
+	CommandBlocklist       []string                      `json:"command_blocklist"`
+	PollIntervalSec        int                           `json:"poll_interval_sec"`
+	LLMEnabled             bool                          `json:"llm_enabled"`
+	LLMAPIKey              string                        `json:"llm_api_key"`
+	LLMModel               string                        `json:"llm_model"`
+	LLMTimeoutSec          int                           `json:"llm_timeout_sec"`
+	LLMConfidenceThreshold float64                       `json:"llm_confidence_threshold"`
+	LocalDefaultTimeoutSec int                           `json:"local_default_timeout_sec"`
+	LocalMaxOutputKB       int                           `json:"local_max_output_kb"`
+	LocalCommandAllowlist  map[string]api.AllowedCommand `json:"local_command_allowlist"`
+	LocalDynamicAllowlist  []string                      `json:"local_dynamic_allowlist"`
+	LocalBaseDir           string                        `json:"local_base_dir"`
 }
 
 type TelegramUpdate struct {
@@ -67,30 +69,6 @@ type TelegramUser struct {
 type TelegramChat struct {
 	ID   int64  `json:"id"`
 	Type string `json:"type"`
-}
-
-type CommandRequest struct {
-	Command string   `json:"command"`
-	UserID  int64    `json:"user_id"`
-	ChatID  int64    `json:"chat_id"`
-	Text    string   `json:"text"`
-	Args    []string `json:"args"`
-}
-
-type CommandResponse struct {
-	Ok       bool   `json:"ok"`
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	Error    string `json:"error"`
-}
-
-type LLMDecision struct {
-	Type       string   `json:"type"`
-	Intent     string   `json:"intent"`
-	Args       []string `json:"args"`
-	Response   string   `json:"response"`
-	Confidence float64  `json:"confidence"`
 }
 
 type rateLimiter struct {
@@ -178,7 +156,7 @@ func loadConfig(path string) (*BrokerConfig, error) {
 	return &cfg, nil
 }
 
-func buildAllowlistFromLocal(static map[string]AllowedCommand, dynamic []string) []string {
+func buildAllowlistFromLocal(static map[string]api.AllowedCommand, dynamic []string) []string {
 	seen := make(map[string]struct{})
 	for name := range static {
 		seen[strings.ToLower(name)] = struct{}{}
@@ -221,7 +199,7 @@ func isCommandBlocked(cmd string, block []string) bool {
 	return false
 }
 
-type commandExecutor func(req CommandRequest) (*CommandResponse, error)
+type commandExecutor func(req api.CommandRequest) (*api.CommandResponse, error)
 
 func validateExecutionConfig(cfg *BrokerConfig) error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.ExecutionMode))
@@ -246,7 +224,7 @@ func buildExecutor(cfg *BrokerConfig) commandExecutor {
 		local := newLocalExecutor(cfg)
 		return local.Execute
 	}
-	return func(req CommandRequest) (*CommandResponse, error) {
+	return func(req api.CommandRequest) (*api.CommandResponse, error) {
 		return forwardCommand(cfg, req)
 	}
 }
@@ -363,7 +341,7 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, upd
 			return
 		}
 
-		resp, err := exec(CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: decision.Args})
+		resp, err := exec(api.CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: decision.Args})
 		if err != nil {
 			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
 			return
@@ -394,7 +372,7 @@ func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, upd
 		return
 	}
 
-	resp, err := exec(CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
+	resp, err := exec(api.CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
 	if err != nil {
 		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
 		return
@@ -479,7 +457,7 @@ func normalizeCommand(text string) (string, []string) {
 	return cmd, parts[1:]
 }
 
-func mapWithLLM(cfg *BrokerConfig, userText string) (*LLMDecision, error) {
+func mapWithLLM(cfg *BrokerConfig, userText string) (*api.LLMDecision, error) {
 	if strings.TrimSpace(cfg.LLMAPIKey) == "" {
 		return nil, fmt.Errorf("llm_api_key is not set")
 	}
@@ -583,7 +561,7 @@ func mapWithLLM(cfg *BrokerConfig, userText string) (*LLMDecision, error) {
 		}
 		for _, c := range out.Content {
 			if c.Type == "output_text" && strings.TrimSpace(c.Text) != "" {
-				var decision LLMDecision
+				var decision api.LLMDecision
 				if err := json.Unmarshal([]byte(c.Text), &decision); err != nil {
 					return nil, fmt.Errorf("llm json parse error: %v", err)
 				}
@@ -598,7 +576,7 @@ func mapWithLLM(cfg *BrokerConfig, userText string) (*LLMDecision, error) {
 	return nil, fmt.Errorf("llm returned no usable output")
 }
 
-func forwardCommand(cfg *BrokerConfig, req CommandRequest) (*CommandResponse, error) {
+func forwardCommand(cfg *BrokerConfig, req api.CommandRequest) (*api.CommandResponse, error) {
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequest(http.MethodPost, cfg.ForwardURL, bytes.NewReader(body))
 	if err != nil {
@@ -622,14 +600,14 @@ func forwardCommand(cfg *BrokerConfig, req CommandRequest) (*CommandResponse, er
 	if err != nil {
 		return nil, err
 	}
-	var cr CommandResponse
+	var cr api.CommandResponse
 	if err := json.Unmarshal(respBody, &cr); err != nil {
 		return nil, err
 	}
 	return &cr, nil
 }
 
-func renderResponse(cmd string, resp *CommandResponse) string {
+func renderResponse(cmd string, resp *api.CommandResponse) string {
 	if resp.Ok {
 		out := strings.TrimSpace(resp.Stdout)
 		if out == "" {

@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"personal_ai/internal/api"
 )
 
 func TestLocalExecutorRunsAllowlistedCommand(t *testing.T) {
@@ -10,13 +12,13 @@ func TestLocalExecutorRunsAllowlistedCommand(t *testing.T) {
 		ExecutionMode:          "local",
 		LocalDefaultTimeoutSec: 2,
 		LocalMaxOutputKB:       8,
-		LocalCommandAllowlist: map[string]AllowedCommand{
+		LocalCommandAllowlist: map[string]api.AllowedCommand{
 			"echo": {Exec: "/bin/echo", Args: []string{"hello"}},
 		},
 	}
 
 	exec := newLocalExecutor(cfg)
-	resp, err := exec.Execute(CommandRequest{Command: "echo"})
+	resp, err := exec.Execute(api.CommandRequest{Command: "echo"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,7 +41,7 @@ func TestLocalExecutorDynamicPwd(t *testing.T) {
 	}
 
 	exec := newLocalExecutor(cfg)
-	resp, err := exec.Execute(CommandRequest{Command: "pwd", ChatID: 42})
+	resp, err := exec.Execute(api.CommandRequest{Command: "pwd", ChatID: 42})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

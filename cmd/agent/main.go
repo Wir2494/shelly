@@ -16,38 +16,19 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"personal_ai/internal/api"
 )
 
 type AgentConfig struct {
-	ListenAddr       string                     `json:"listen_addr"`
-	AuthToken        string                     `json:"auth_token"`
-	DefaultTimeoutSec int                        `json:"default_timeout_sec"`
-	MaxOutputKB      int                        `json:"max_output_kb"`
-	CommandAllowlist map[string]AllowedCommand  `json:"command_allowlist"`
-	CommandBlocklist []string                   `json:"command_blocklist"`
-	DynamicAllowlist []string                   `json:"dynamic_allowlist"`
-	BaseDir          string                     `json:"base_dir"`
-}
-
-type AllowedCommand struct {
-	Exec string   `json:"exec"`
-	Args []string `json:"args"`
-}
-
-type CommandRequest struct {
-	Command string `json:"command"`
-	UserID  int64  `json:"user_id"`
-	ChatID  int64  `json:"chat_id"`
-	Text    string `json:"text"`
-	Args    []string `json:"args"`
-}
-
-type CommandResponse struct {
-	Ok       bool   `json:"ok"`
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	Error    string `json:"error"`
+	ListenAddr        string                        `json:"listen_addr"`
+	AuthToken         string                        `json:"auth_token"`
+	DefaultTimeoutSec int                           `json:"default_timeout_sec"`
+	MaxOutputKB       int                           `json:"max_output_kb"`
+	CommandAllowlist  map[string]api.AllowedCommand `json:"command_allowlist"`
+	CommandBlocklist  []string                      `json:"command_blocklist"`
+	DynamicAllowlist  []string                      `json:"dynamic_allowlist"`
+	BaseDir           string                        `json:"base_dir"`
 }
 
 func loadConfig(path string) (*AgentConfig, error) {
@@ -107,7 +88,7 @@ func main() {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		var req CommandRequest
+		var req api.CommandRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -115,13 +96,13 @@ func main() {
 
 		cmdName := strings.TrimSpace(req.Command)
 		if cmdName == "" {
-			writeJSON(w, http.StatusBadRequest, CommandResponse{Ok: false, Error: "empty command"})
+			writeJSON(w, http.StatusBadRequest, api.CommandResponse{Ok: false, Error: "empty command"})
 			return
 		}
-	if isBlocked(cmdName, cfg.CommandBlocklist) {
-		writeJSON(w, http.StatusForbidden, CommandResponse{Ok: false, Error: "command blocked"})
-		return
-	}
+		if isBlocked(cmdName, cfg.CommandBlocklist) {
+			writeJSON(w, http.StatusForbidden, api.CommandResponse{Ok: false, Error: "command blocked"})
+			return
+		}
 
 		if isDynamicAllowed(cmdName, cfg.DynamicAllowlist) {
 			resp := handleDynamicCommand(cfg, chatCWD, req.ChatID, cmdName, req.Args)
@@ -129,10 +110,10 @@ func main() {
 			return
 		}
 
-	allowed, ok := cfg.CommandAllowlist[cmdName]
-	if !ok {
-		writeJSON(w, http.StatusForbidden, CommandResponse{Ok: false, Error: "command not allowed"})
-		return
+		allowed, ok := cfg.CommandAllowlist[cmdName]
+		if !ok {
+			writeJSON(w, http.StatusForbidden, api.CommandResponse{Ok: false, Error: "command not allowed"})
+			return
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.DefaultTimeoutSec)*time.Second)
@@ -144,7 +125,7 @@ func main() {
 		cmd.Stderr = &stderr
 
 		err = cmd.Run()
-		resp := CommandResponse{}
+		resp := api.CommandResponse{}
 		if err == nil {
 			resp.Ok = true
 			resp.ExitCode = 0
@@ -206,21 +187,21 @@ func (s *chatCWDStore) set(chatID int64, dir string) {
 	s.byID[chatID] = dir
 }
 
-func handleDynamicCommand(cfg *AgentConfig, store *chatCWDStore, chatID int64, cmd string, args []string) CommandResponse {
+func handleDynamicCommand(cfg *AgentConfig, store *chatCWDStore, chatID int64, cmd string, args []string) api.CommandResponse {
 	base := strings.TrimSpace(cfg.BaseDir)
 	if base == "" {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "base_dir not configured"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "base_dir not configured"}
 	}
 
 	baseAbs, err := filepath.Abs(base)
 	if err != nil {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "invalid base_dir"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "invalid base_dir"}
 	}
 
 	switch strings.ToLower(cmd) {
 	case "pwd":
 		cwd := store.get(chatID, baseAbs)
-		return CommandResponse{Ok: true, ExitCode: 0, Stdout: cwd + "\n"}
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: cwd + "\n"}
 	case "ls", "ll":
 		cwd := store.get(chatID, baseAbs)
 		return runSafeList(baseAbs, cwd, cmd, args, cfg.DefaultTimeoutSec, cfg.MaxOutputKB)
@@ -230,11 +211,11 @@ func handleDynamicCommand(cfg *AgentConfig, store *chatCWDStore, chatID int64, c
 	case "cd":
 		return runSafeCd(baseAbs, store, chatID, args)
 	default:
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "unsupported dynamic command"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "unsupported dynamic command"}
 	}
 }
 
-func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, maxKB int) CommandResponse {
+func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, maxKB int) api.CommandResponse {
 	flags := []string{}
 	paths := []string{}
 
@@ -245,13 +226,13 @@ func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, max
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
 			if !isAllowedLsFlag(a) {
-				return CommandResponse{Ok: false, ExitCode: 1, Error: "ls flag not allowed: " + a}
+				return api.CommandResponse{Ok: false, ExitCode: 1, Error: "ls flag not allowed: " + a}
 			}
 			flags = append(flags, a)
 		} else {
 			p, err := sanitizePath(baseAbs, cwdAbs, a)
 			if err != nil {
-				return CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+				return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 			}
 			paths = append(paths, p)
 		}
@@ -264,18 +245,18 @@ func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, max
 	return runCommand(cwdAbs, "/bin/ls", append(flags, paths...), timeoutSec, maxKB)
 }
 
-func runSafeCat(baseAbs, cwdAbs string, args []string, timeoutSec int, maxKB int) CommandResponse {
+func runSafeCat(baseAbs, cwdAbs string, args []string, timeoutSec int, maxKB int) api.CommandResponse {
 	if len(args) == 0 {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "cat requires a file path"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "cat requires a file path"}
 	}
 	paths := []string{}
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
-			return CommandResponse{Ok: false, ExitCode: 1, Error: "cat flags not allowed"}
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: "cat flags not allowed"}
 		}
 		p, err := sanitizePath(baseAbs, cwdAbs, a)
 		if err != nil {
-			return CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 		}
 		paths = append(paths, p)
 	}
@@ -284,12 +265,12 @@ func runSafeCat(baseAbs, cwdAbs string, args []string, timeoutSec int, maxKB int
 
 func isAllowedLsFlag(flag string) bool {
 	allowed := map[string]bool{
-		"-a": true,
-		"-l": true,
-		"-h": true,
-		"-t": true,
-		"-r": true,
-		"-1": true,
+		"-a":  true,
+		"-l":  true,
+		"-h":  true,
+		"-t":  true,
+		"-r":  true,
+		"-1":  true,
 		"-la": true,
 		"-al": true,
 	}
@@ -328,27 +309,27 @@ func sanitizePath(baseAbs string, cwdAbs string, p string) (string, error) {
 	return abs, nil
 }
 
-func runSafeCd(baseAbs string, store *chatCWDStore, chatID int64, args []string) CommandResponse {
+func runSafeCd(baseAbs string, store *chatCWDStore, chatID int64, args []string) api.CommandResponse {
 	if len(args) == 0 {
 		store.set(chatID, baseAbs)
-		return CommandResponse{Ok: true, ExitCode: 0, Stdout: baseAbs + "\n"}
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: baseAbs + "\n"}
 	}
 	if len(args) > 1 {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "cd accepts a single path"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "cd accepts a single path"}
 	}
 	target, err := sanitizePath(baseAbs, store.get(chatID, baseAbs), args[0])
 	if err != nil {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 	}
 	info, err := os.Stat(target)
 	if err != nil || !info.IsDir() {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "not a directory"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "not a directory"}
 	}
 	store.set(chatID, target)
-	return CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
 }
 
-func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB int) CommandResponse {
+func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB int) api.CommandResponse {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
@@ -359,7 +340,7 @@ func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB i
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	resp := CommandResponse{}
+	resp := api.CommandResponse{}
 	if err == nil {
 		resp.Ok = true
 		resp.ExitCode = 0

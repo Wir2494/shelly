@@ -11,12 +11,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-type AllowedCommand struct {
-	Exec string   `json:"exec"`
-	Args []string `json:"args"`
-}
+	"personal_ai/internal/api"
+)
 
 type localExecutor struct {
 	cfg     *BrokerConfig
@@ -27,10 +24,10 @@ func newLocalExecutor(cfg *BrokerConfig) *localExecutor {
 	return &localExecutor{cfg: cfg, chatCWD: newChatCWD()}
 }
 
-func (e *localExecutor) Execute(req CommandRequest) (*CommandResponse, error) {
+func (e *localExecutor) Execute(req api.CommandRequest) (*api.CommandResponse, error) {
 	cmdName := strings.TrimSpace(req.Command)
 	if cmdName == "" {
-		resp := CommandResponse{Ok: false, ExitCode: 1, Error: "empty command"}
+		resp := api.CommandResponse{Ok: false, ExitCode: 1, Error: "empty command"}
 		return &resp, nil
 	}
 
@@ -41,7 +38,7 @@ func (e *localExecutor) Execute(req CommandRequest) (*CommandResponse, error) {
 
 	allowed, ok := e.cfg.LocalCommandAllowlist[cmdName]
 	if !ok {
-		resp := CommandResponse{Ok: false, ExitCode: 1, Error: "command not allowed"}
+		resp := api.CommandResponse{Ok: false, ExitCode: 1, Error: "command not allowed"}
 		return &resp, nil
 	}
 
@@ -54,7 +51,7 @@ func (e *localExecutor) Execute(req CommandRequest) (*CommandResponse, error) {
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	resp := CommandResponse{}
+	resp := api.CommandResponse{}
 	if err == nil {
 		resp.Ok = true
 		resp.ExitCode = 0
@@ -102,21 +99,21 @@ func (s *chatCWDStore) set(chatID int64, dir string) {
 	s.byID[chatID] = dir
 }
 
-func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, cmd string, args []string) CommandResponse {
+func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, cmd string, args []string) api.CommandResponse {
 	base := strings.TrimSpace(cfg.LocalBaseDir)
 	if base == "" {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "local_base_dir not configured"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "local_base_dir not configured"}
 	}
 
 	baseAbs, err := filepath.Abs(base)
 	if err != nil {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "invalid local_base_dir"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "invalid local_base_dir"}
 	}
 
 	switch strings.ToLower(cmd) {
 	case "pwd":
 		cwd := store.get(chatID, baseAbs)
-		return CommandResponse{Ok: true, ExitCode: 0, Stdout: cwd + "\n"}
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: cwd + "\n"}
 	case "ls", "ll":
 		cwd := store.get(chatID, baseAbs)
 		return runSafeList(baseAbs, cwd, cmd, args, cfg.LocalDefaultTimeoutSec, cfg.LocalMaxOutputKB)
@@ -126,11 +123,11 @@ func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, 
 	case "cd":
 		return runSafeCd(baseAbs, store, chatID, args)
 	default:
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "unsupported dynamic command"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "unsupported dynamic command"}
 	}
 }
 
-func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, maxKB int) CommandResponse {
+func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, maxKB int) api.CommandResponse {
 	flags := []string{}
 	paths := []string{}
 
@@ -141,13 +138,13 @@ func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, max
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
 			if !isAllowedLsFlag(a) {
-				return CommandResponse{Ok: false, ExitCode: 1, Error: "ls flag not allowed: " + a}
+				return api.CommandResponse{Ok: false, ExitCode: 1, Error: "ls flag not allowed: " + a}
 			}
 			flags = append(flags, a)
 		} else {
 			p, err := sanitizePath(baseAbs, cwdAbs, a)
 			if err != nil {
-				return CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+				return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 			}
 			paths = append(paths, p)
 		}
@@ -160,18 +157,18 @@ func runSafeList(baseAbs, cwdAbs, cmd string, args []string, timeoutSec int, max
 	return runCommand(cwdAbs, "/bin/ls", append(flags, paths...), timeoutSec, maxKB)
 }
 
-func runSafeCat(baseAbs, cwdAbs string, args []string, timeoutSec int, maxKB int) CommandResponse {
+func runSafeCat(baseAbs, cwdAbs string, args []string, timeoutSec int, maxKB int) api.CommandResponse {
 	if len(args) == 0 {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "cat requires a file path"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "cat requires a file path"}
 	}
 	paths := []string{}
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
-			return CommandResponse{Ok: false, ExitCode: 1, Error: "cat flags not allowed"}
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: "cat flags not allowed"}
 		}
 		p, err := sanitizePath(baseAbs, cwdAbs, a)
 		if err != nil {
-			return CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 		}
 		paths = append(paths, p)
 	}
@@ -224,27 +221,27 @@ func sanitizePath(baseAbs string, cwdAbs string, p string) (string, error) {
 	return abs, nil
 }
 
-func runSafeCd(baseAbs string, store *chatCWDStore, chatID int64, args []string) CommandResponse {
+func runSafeCd(baseAbs string, store *chatCWDStore, chatID int64, args []string) api.CommandResponse {
 	if len(args) == 0 {
 		store.set(chatID, baseAbs)
-		return CommandResponse{Ok: true, ExitCode: 0, Stdout: baseAbs + "\n"}
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: baseAbs + "\n"}
 	}
 	if len(args) > 1 {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "cd accepts a single path"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "cd accepts a single path"}
 	}
 	target, err := sanitizePath(baseAbs, store.get(chatID, baseAbs), args[0])
 	if err != nil {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 	}
 	info, err := os.Stat(target)
 	if err != nil || !info.IsDir() {
-		return CommandResponse{Ok: false, ExitCode: 1, Error: "not a directory"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "not a directory"}
 	}
 	store.set(chatID, target)
-	return CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
 }
 
-func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB int) CommandResponse {
+func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB int) api.CommandResponse {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
@@ -255,7 +252,7 @@ func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB i
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	resp := CommandResponse{}
+	resp := api.CommandResponse{}
 	if err == nil {
 		resp.Ok = true
 		resp.ExitCode = 0
