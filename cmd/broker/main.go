@@ -224,7 +224,13 @@ type Executor interface {
 	Execute(ctx context.Context, req api.CommandRequest) (*api.CommandResponse, error)
 }
 
-type telegramSender func(token string, chatID int64, text string) error
+type TelegramSender interface {
+	Send(chatID int64, text string) error
+}
+
+type LLMClient interface {
+	Map(ctx context.Context, userText string, allowlist []string) (*api.LLMDecision, error)
+}
 
 type pipelineContext struct {
 	cfg    *BrokerConfig
@@ -236,10 +242,23 @@ type pipelineContext struct {
 	chatID int64
 	cmd    string
 	args   []string
-	sender telegramSender
+	sender TelegramSender
+	llm    LLMClient
 }
 
 type pipelineStage func(*pipelineContext) bool
+
+type Broker struct {
+	cfg    *BrokerConfig
+	rl     *rateLimiter
+	exec   Executor
+	sender TelegramSender
+	llm    LLMClient
+}
+
+func newBroker(cfg *BrokerConfig, rl *rateLimiter, exec Executor, sender TelegramSender, llm LLMClient) *Broker {
+	return &Broker{cfg: cfg, rl: rl, exec: exec, sender: sender, llm: llm}
+}
 
 func validateExecutionConfig(cfg *BrokerConfig) error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Execution.Mode))
@@ -280,11 +299,14 @@ func main() {
 
 	rl := newRateLimiter(time.Minute, cfg.Policy.RateLimitPerMinute)
 	exec := buildExecutor(cfg)
+	sender := newTelegramSender(cfg.Telegram.BotToken)
+	llm := newOpenAIClient(cfg.LLM)
+	broker := newBroker(cfg, rl, exec, sender, llm)
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.Telegram.Mode))
 	if mode == "polling" {
 		log.Printf("broker starting in polling mode")
-		pollLoop(cfg, rl, exec)
+		broker.pollLoop()
 		return
 	}
 
@@ -305,7 +327,7 @@ func main() {
 			return
 		}
 
-		processUpdate(cfg, rl, exec, update)
+		broker.processUpdate(update)
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -321,17 +343,14 @@ func main() {
 	}
 }
 
-func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec Executor, update TelegramUpdate) {
-	processUpdateWithSender(cfg, rl, exec, update, sendTelegramMessage)
-}
-
-func processUpdateWithSender(cfg *BrokerConfig, rl *rateLimiter, exec Executor, update TelegramUpdate, sender telegramSender) {
+func (b *Broker) processUpdate(update TelegramUpdate) {
 	ctx := &pipelineContext{
-		cfg:    cfg,
-		rl:     rl,
-		exec:   exec,
+		cfg:    b.cfg,
+		rl:     b.rl,
+		exec:   b.exec,
 		update: update,
-		sender: sender,
+		sender: b.sender,
+		llm:    b.llm,
 	}
 
 	stages := []pipelineStage{
@@ -376,7 +395,10 @@ func stageRateLimit(ctx *pipelineContext) bool {
 
 func stageRoute(ctx *pipelineContext) bool {
 	if ctx.cfg.LLM.Enabled {
-		decision, err := mapWithLLM(ctx.cfg, ctx.msg.Text)
+		if ctx.llm == nil {
+			return sendReply(ctx, "LLM error: client not configured")
+		}
+		decision, err := ctx.llm.Map(context.Background(), ctx.msg.Text, ctx.cfg.Policy.CommandAllowlist)
 		if err != nil {
 			return sendReply(ctx, "LLM error: "+err.Error())
 		}
@@ -443,30 +465,30 @@ func stageExecute(ctx *pipelineContext) bool {
 }
 
 func sendReply(ctx *pipelineContext, text string) bool {
-	if err := ctx.sender(ctx.cfg.Telegram.BotToken, ctx.chatID, text); err != nil {
+	if err := ctx.sender.Send(ctx.chatID, text); err != nil {
 		log.Printf("send telegram: %v", err)
 	}
 	return true
 }
 
-func pollLoop(cfg *BrokerConfig, rl *rateLimiter, exec Executor) {
+func (b *Broker) pollLoop() {
 	client := &http.Client{Timeout: 35 * time.Second}
 	var offset int64
 	for {
-		updates, err := getUpdates(client, cfg.Telegram.BotToken, offset)
+		updates, err := getUpdates(client, b.cfg.Telegram.BotToken, offset)
 		if err != nil {
 			log.Printf("getUpdates error: %v", err)
-			time.Sleep(time.Duration(cfg.Telegram.PollIntervalSec) * time.Second)
+			time.Sleep(time.Duration(b.cfg.Telegram.PollIntervalSec) * time.Second)
 			continue
 		}
 		for _, upd := range updates {
-			processUpdate(cfg, rl, exec, upd)
+			b.processUpdate(upd)
 			if upd.UpdateID >= offset {
 				offset = upd.UpdateID + 1
 			}
 		}
 		if len(updates) == 0 {
-			time.Sleep(time.Duration(cfg.Telegram.PollIntervalSec) * time.Second)
+			time.Sleep(time.Duration(b.cfg.Telegram.PollIntervalSec) * time.Second)
 		}
 	}
 }
@@ -522,125 +544,6 @@ func normalizeCommand(text string) (string, []string) {
 	return cmd, parts[1:]
 }
 
-func mapWithLLM(cfg *BrokerConfig, userText string) (*api.LLMDecision, error) {
-	if strings.TrimSpace(cfg.LLM.APIKey) == "" {
-		return nil, fmt.Errorf("llm.api_key is not set")
-	}
-	model := cfg.LLM.Model
-	if strings.TrimSpace(model) == "" {
-		model = "gpt-5.2"
-	}
-
-	systemPrompt := "You are a command router. Decide whether the user wants to run an allowed command or just chat. " +
-		"If it is a command, map it to one of these intents: " + strings.Join(cfg.Policy.CommandAllowlist, ", ") + ". " +
-		"Return JSON only that matches the provided schema. If it is chat, respond in the 'response' field."
-
-	reqBody := map[string]any{
-		"model": model,
-		"input": []any{
-			map[string]any{
-				"role": "system",
-				"content": []any{
-					map[string]any{"type": "input_text", "text": systemPrompt},
-				},
-			},
-			map[string]any{
-				"role": "user",
-				"content": []any{
-					map[string]any{"type": "input_text", "text": userText},
-				},
-			},
-		},
-		"text": map[string]any{
-			"format": map[string]any{
-				"type": "json_schema",
-				"name": "telegram_intent",
-				"schema": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"type": map[string]any{
-							"type": "string",
-							"enum": []string{"command", "chat"},
-						},
-						"intent": map[string]any{"type": "string"},
-						"args": map[string]any{
-							"type":  "array",
-							"items": map[string]any{"type": "string"},
-						},
-						"response": map[string]any{"type": "string"},
-						"confidence": map[string]any{
-							"type":    "number",
-							"minimum": 0,
-							"maximum": 1,
-						},
-					},
-					"required":             []string{"type", "intent", "args", "response", "confidence"},
-					"additionalProperties": false,
-				},
-			},
-		},
-	}
-
-	payload, _ := json.Marshal(reqBody)
-	req, err := http.NewRequest(http.MethodPost, "https://api.openai.com/v1/responses", bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+cfg.LLM.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: time.Duration(cfg.LLM.TimeoutSec) * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<12))
-		return nil, fmt.Errorf("llm status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-
-	var parsed struct {
-		Output []struct {
-			Type    string `json:"type"`
-			Role    string `json:"role"`
-			Status  string `json:"status"`
-			Content []struct {
-				Type    string `json:"type"`
-				Text    string `json:"text"`
-				Refusal string `json:"refusal"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, err
-	}
-
-	for _, out := range parsed.Output {
-		if out.Type != "message" {
-			continue
-		}
-		for _, c := range out.Content {
-			if c.Type == "output_text" && strings.TrimSpace(c.Text) != "" {
-				var decision api.LLMDecision
-				if err := json.Unmarshal([]byte(c.Text), &decision); err != nil {
-					return nil, fmt.Errorf("llm json parse error: %v", err)
-				}
-				return &decision, nil
-			}
-			if c.Type == "refusal" && strings.TrimSpace(c.Refusal) != "" {
-				return nil, fmt.Errorf("llm refused: %s", c.Refusal)
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("llm returned no usable output")
-}
-
 func renderResponse(cmd string, resp *api.CommandResponse) string {
 	if resp.Ok {
 		out := strings.TrimSpace(resp.Stdout)
@@ -662,34 +565,4 @@ func renderResponse(cmd string, resp *api.CommandResponse) string {
 		return fmt.Sprintf("%s failed (exit %d): %s\n%s", cmd, resp.ExitCode, errMsg, out)
 	}
 	return fmt.Sprintf("%s failed (exit %d): %s", cmd, resp.ExitCode, errMsg)
-}
-
-func sendTelegramMessage(token string, chatID int64, text string) error {
-	if token == "" {
-		return fmt.Errorf("telegram bot token missing")
-	}
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-	payload := map[string]any{
-		"chat_id": chatID,
-		"text":    text,
-	}
-	body, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-		return fmt.Errorf("telegram status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	return nil
 }
