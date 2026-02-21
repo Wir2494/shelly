@@ -201,6 +201,23 @@ func isCommandBlocked(cmd string, block []string) bool {
 
 type commandExecutor func(req api.CommandRequest) (*api.CommandResponse, error)
 
+type telegramSender func(token string, chatID int64, text string) error
+
+type pipelineContext struct {
+	cfg    *BrokerConfig
+	rl     *rateLimiter
+	exec   commandExecutor
+	update TelegramUpdate
+	msg    *TelegramMessage
+	userID int64
+	chatID int64
+	cmd    string
+	args   []string
+	sender telegramSender
+}
+
+type pipelineStage func(*pipelineContext) bool
+
 func validateExecutionConfig(cfg *BrokerConfig) error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.ExecutionMode))
 	switch mode {
@@ -285,103 +302,131 @@ func main() {
 }
 
 func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, update TelegramUpdate) {
-	if update.Message == nil {
-		return
+	processUpdateWithSender(cfg, rl, exec, update, sendTelegramMessage)
+}
+
+func processUpdateWithSender(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, update TelegramUpdate, sender telegramSender) {
+	ctx := &pipelineContext{
+		cfg:    cfg,
+		rl:     rl,
+		exec:   exec,
+		update: update,
+		sender: sender,
 	}
 
-	msg := update.Message
-	userID := msg.From.ID
-	chatID := msg.Chat.ID
-
-	if !isAllowed(userID, cfg.TelegramAllowedUserIDs) {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Unauthorized user.")
-		return
+	stages := []pipelineStage{
+		stageExtractMessage,
+		stageAuth,
+		stageRateLimit,
+		stageRoute,
+		stagePolicy,
+		stageExecute,
 	}
 
-	if !rl.allow(userID) {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Rate limit exceeded. Try again soon.")
-		return
-	}
-
-	if cfg.LLMEnabled {
-		decision, err := mapWithLLM(cfg, msg.Text)
-		if err != nil {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "LLM error: "+err.Error())
+	for _, stage := range stages {
+		if stop := stage(ctx); stop {
 			return
+		}
+	}
+}
+
+func stageExtractMessage(ctx *pipelineContext) bool {
+	if ctx.update.Message == nil {
+		return true
+	}
+	ctx.msg = ctx.update.Message
+	ctx.userID = ctx.msg.From.ID
+	ctx.chatID = ctx.msg.Chat.ID
+	return false
+}
+
+func stageAuth(ctx *pipelineContext) bool {
+	if !isAllowed(ctx.userID, ctx.cfg.TelegramAllowedUserIDs) {
+		return sendReply(ctx, "Unauthorized user.")
+	}
+	return false
+}
+
+func stageRateLimit(ctx *pipelineContext) bool {
+	if !ctx.rl.allow(ctx.userID) {
+		return sendReply(ctx, "Rate limit exceeded. Try again soon.")
+	}
+	return false
+}
+
+func stageRoute(ctx *pipelineContext) bool {
+	if ctx.cfg.LLMEnabled {
+		decision, err := mapWithLLM(ctx.cfg, ctx.msg.Text)
+		if err != nil {
+			return sendReply(ctx, "LLM error: "+err.Error())
 		}
 
 		if strings.EqualFold(decision.Type, "chat") {
-			if strings.TrimSpace(decision.Response) == "" {
-				_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "I didn't understand that. Try a command or ask again.")
-			} else {
-				_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, decision.Response)
+			resp := strings.TrimSpace(decision.Response)
+			if resp == "" {
+				return sendReply(ctx, "I didn't understand that. Try a command or ask again.")
 			}
-			return
+			return sendReply(ctx, resp)
 		}
 
 		cmd := strings.ToLower(strings.TrimSpace(decision.Intent))
 		if cmd == "" {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "I couldn't determine a command. Try again.")
-			return
+			return sendReply(ctx, "I couldn't determine a command. Try again.")
 		}
-		if decision.Confidence < cfg.LLMConfidenceThreshold {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "I am not confident this is a command. Please rephrase or use a direct command.")
-			return
+		if decision.Confidence < ctx.cfg.LLMConfidenceThreshold {
+			return sendReply(ctx, "I am not confident this is a command. Please rephrase or use a direct command.")
 		}
 		if cmd == "help" {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Allowed commands: "+strings.Join(cfg.CommandAllowlist, ", "))
-			return
+			return sendReply(ctx, "Allowed commands: "+strings.Join(ctx.cfg.CommandAllowlist, ", "))
 		}
-		if isCommandBlocked(cmd, cfg.CommandBlocklist) {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Command blocked.")
-			return
-		}
-		if !isCommandAllowed(cmd, cfg.CommandAllowlist) {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Command not allowed.")
-			return
-		}
-
-		resp, err := exec(api.CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: decision.Args})
-		if err != nil {
-			_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
-			return
-		}
-
-		reply := renderResponse(cmd, resp)
-		if err := sendTelegramMessage(cfg.TelegramBotToken, chatID, reply); err != nil {
-			log.Printf("send telegram: %v", err)
-		}
-		return
+		ctx.cmd = cmd
+		ctx.args = decision.Args
+		return false
 	}
 
-	cmd, args := normalizeCommand(msg.Text)
+	cmd, args := normalizeCommand(ctx.msg.Text)
 	if cmd == "" {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Empty command.")
-		return
+		return sendReply(ctx, "Empty command.")
 	}
 	if cmd == "help" {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Allowed commands: "+strings.Join(cfg.CommandAllowlist, ", "))
-		return
+		return sendReply(ctx, "Allowed commands: "+strings.Join(ctx.cfg.CommandAllowlist, ", "))
 	}
-	if isCommandBlocked(cmd, cfg.CommandBlocklist) {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Command blocked.")
-		return
-	}
-	if !isCommandAllowed(cmd, cfg.CommandAllowlist) {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Command not allowed.")
-		return
-	}
+	ctx.cmd = cmd
+	ctx.args = args
+	return false
+}
 
-	resp, err := exec(api.CommandRequest{Command: cmd, UserID: userID, ChatID: chatID, Text: msg.Text, Args: args})
+func stagePolicy(ctx *pipelineContext) bool {
+	if isCommandBlocked(ctx.cmd, ctx.cfg.CommandBlocklist) {
+		return sendReply(ctx, "Command blocked.")
+	}
+	if !isCommandAllowed(ctx.cmd, ctx.cfg.CommandAllowlist) {
+		return sendReply(ctx, "Command not allowed.")
+	}
+	return false
+}
+
+func stageExecute(ctx *pipelineContext) bool {
+	resp, err := ctx.exec(api.CommandRequest{
+		Command: ctx.cmd,
+		UserID:  ctx.userID,
+		ChatID:  ctx.chatID,
+		Text:    ctx.msg.Text,
+		Args:    ctx.args,
+	})
 	if err != nil {
-		_ = sendTelegramMessage(cfg.TelegramBotToken, chatID, "Agent error: "+err.Error())
-		return
+		return sendReply(ctx, "Agent error: "+err.Error())
 	}
 
-	reply := renderResponse(cmd, resp)
-	if err := sendTelegramMessage(cfg.TelegramBotToken, chatID, reply); err != nil {
+	reply := renderResponse(ctx.cmd, resp)
+	return sendReply(ctx, reply)
+}
+
+func sendReply(ctx *pipelineContext, text string) bool {
+	if err := ctx.sender(ctx.cfg.TelegramBotToken, ctx.chatID, text); err != nil {
 		log.Printf("send telegram: %v", err)
 	}
+	return true
 }
 
 func pollLoop(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor) {
