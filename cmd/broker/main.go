@@ -451,7 +451,7 @@ func stageRoute(ctx *pipelineContext) bool {
 		}
 		if cmd == "help" {
 			logAudit(ctx, "help", "llm requested help", "ok")
-			return sendReply(ctx, "Allowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
+			return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
 		}
 		ctx.cmd = cmd
 		ctx.args = decision.Args
@@ -466,7 +466,7 @@ func stageRoute(ctx *pipelineContext) bool {
 	}
 	if cmd == "help" {
 		logAudit(ctx, "help", "direct help", "ok")
-		return sendReply(ctx, "Allowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
+		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
 	}
 	ctx.cmd = cmd
 	ctx.args = args
