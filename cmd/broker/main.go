@@ -419,12 +419,6 @@ func stageRateLimit(ctx *pipelineContext) bool {
 }
 
 func stageRoute(ctx *pipelineContext) bool {
-	if cmd, args, ok := parseDirectCommand(ctx.msg.Text, ctx.cfg.Policy.CommandAllowlist); ok && cmd == "ping" {
-		ctx.cmd = cmd
-		ctx.args = args
-		logAudit(ctx, "command", "direct ping bypass", "ok")
-		return false
-	}
 	if isCapabilityQuestion(ctx.msg.Text) {
 		logAudit(ctx, "help", "capabilities question", "ok")
 		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
