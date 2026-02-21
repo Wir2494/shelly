@@ -55,9 +55,11 @@ func (c *openAIClient) Map(ctx context.Context, userText string, allowlist []str
 	}
 
 	systemPrompt := "You are a command router. Decide whether the user wants to run an allowed command or just chat. " +
+		"If the user asks to perform an action that matches an allowed command, you MUST return type=command. " +
 		"If it is a command, map it to one of these intents: " + strings.Join(allowlist, ", ") + ". " +
 		"Commands may include dynamic filesystem actions (pwd, ls/ll, cd, cat, touch, mkdir, count, find) and ping, " +
 		"but always stay within the configured base directory when using paths. " +
+		"Examples: 'ping google.com' => command intent=ping args=[google.com]. " +
 		"Return JSON only that matches the provided schema. If it is chat, respond in the 'response' field."
 
 	reqBody := map[string]any{
