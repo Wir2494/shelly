@@ -4,16 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-User=wiraash
-WorkingDirectory=/home/wiraash/broker
-ExecStart=/home/wiraash/broker/broker -config /home/wiraash/broker/configs/broker.json
+User=wir
+WorkingDirectory=/home/wir/broker
+ExecStart=/home/wir/broker/broker -config /home/wir/broker/configs/broker.json
 Restart=always
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/wiraash/broker
+ReadWritePaths=/home/wir/broker
 
 [Install]
 WantedBy=multi-user.target

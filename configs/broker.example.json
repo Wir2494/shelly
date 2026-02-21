@@ -16,7 +16,7 @@
   "poll_interval_sec": 3,
   "local_default_timeout_sec": 10,
   "local_max_output_kb": 8,
-  "local_base_dir": "/home/wiraash",
+  "local_base_dir": "/home/wir",
   "local_dynamic_allowlist": ["ls", "ll", "cat", "pwd", "cd"],
   "local_command_allowlist": {
     "status": { "exec": "/usr/bin/uptime", "args": [] },
