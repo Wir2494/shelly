@@ -35,6 +35,14 @@ func (l *llmStub) Map(ctx context.Context, userText string, allowlist []string) 
 	return l.decision, l.err
 }
 
+type auditStub struct {
+	events []AuditEvent
+}
+
+func (a *auditStub) Log(event AuditEvent) {
+	a.events = append(a.events, event)
+}
+
 func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 	cfg := &BrokerConfig{
 		Telegram: TelegramConfig{
@@ -49,7 +57,8 @@ func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 		return &api.CommandResponse{Ok: true, ExitCode: 0}, nil
 	})
 	sender := &senderStub{}
-	broker := newBroker(cfg, rl, exec, sender, nil)
+	audit := &auditStub{}
+	broker := newBroker(cfg, rl, exec, sender, nil, audit)
 
 	update := TelegramUpdate{Message: &TelegramMessage{
 		From: TelegramUser{ID: 2},
@@ -67,6 +76,9 @@ func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 	}
 	if sender.calls[0] != "Unauthorized user." {
 		t.Fatalf("unexpected response: %q", sender.calls[0])
+	}
+	if len(audit.events) == 0 || audit.events[0].Type != "auth_denied" {
+		t.Fatalf("expected auth_denied audit event")
 	}
 }
 
@@ -87,7 +99,7 @@ func TestPipelineHelpSendsAllowlist(t *testing.T) {
 		return &api.CommandResponse{Ok: true, ExitCode: 0}, nil
 	})
 	sender := &senderStub{}
-	broker := newBroker(cfg, rl, exec, sender, nil)
+	broker := newBroker(cfg, rl, exec, sender, nil, nil)
 
 	update := TelegramUpdate{Message: &TelegramMessage{
 		From: TelegramUser{ID: 1},
@@ -130,7 +142,7 @@ func TestPipelineLLMChatSkipsExecution(t *testing.T) {
 	})
 	sender := &senderStub{}
 	llm := &llmStub{decision: &api.LLMDecision{Type: "chat", Response: "hello", Confidence: 1}}
-	broker := newBroker(cfg, rl, exec, sender, llm)
+	broker := newBroker(cfg, rl, exec, sender, llm, nil)
 
 	update := TelegramUpdate{Message: &TelegramMessage{
 		From: TelegramUser{ID: 1},

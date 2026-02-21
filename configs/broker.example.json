@@ -51,5 +51,8 @@
       "chown",
       "sudo"
     ]
+  },
+  "audit": {
+    "file_path": "/home/wir/Projects/personal_ai/audit.log"
   }
 }

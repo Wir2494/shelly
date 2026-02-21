@@ -24,6 +24,7 @@ type BrokerConfig struct {
 	Execution  ExecutionConfig `json:"execution"`
 	LLM        LLMConfig       `json:"llm"`
 	Policy     PolicyConfig    `json:"policy"`
+	Audit      AuditConfig     `json:"audit"`
 }
 
 type TelegramConfig struct {
@@ -61,6 +62,10 @@ type PolicyConfig struct {
 	RateLimitPerMinute int      `json:"rate_limit_per_minute"`
 	CommandAllowlist   []string `json:"command_allowlist"`
 	CommandBlocklist   []string `json:"command_blocklist"`
+}
+
+type AuditConfig struct {
+	FilePath string `json:"file_path"`
 }
 
 type TelegramUpdate struct {
@@ -232,6 +237,20 @@ type LLMClient interface {
 	Map(ctx context.Context, userText string, allowlist []string) (*api.LLMDecision, error)
 }
 
+type AuditLogger interface {
+	Log(event AuditEvent)
+}
+
+type AuditEvent struct {
+	Timestamp time.Time
+	Type      string
+	UserID    int64
+	ChatID    int64
+	Command   string
+	Outcome   string
+	Message   string
+}
+
 type pipelineContext struct {
 	cfg    *BrokerConfig
 	rl     *rateLimiter
@@ -244,6 +263,7 @@ type pipelineContext struct {
 	args   []string
 	sender TelegramSender
 	llm    LLMClient
+	audit  AuditLogger
 }
 
 type pipelineStage func(*pipelineContext) bool
@@ -254,10 +274,11 @@ type Broker struct {
 	exec   Executor
 	sender TelegramSender
 	llm    LLMClient
+	audit  AuditLogger
 }
 
-func newBroker(cfg *BrokerConfig, rl *rateLimiter, exec Executor, sender TelegramSender, llm LLMClient) *Broker {
-	return &Broker{cfg: cfg, rl: rl, exec: exec, sender: sender, llm: llm}
+func newBroker(cfg *BrokerConfig, rl *rateLimiter, exec Executor, sender TelegramSender, llm LLMClient, audit AuditLogger) *Broker {
+	return &Broker{cfg: cfg, rl: rl, exec: exec, sender: sender, llm: llm, audit: audit}
 }
 
 func validateExecutionConfig(cfg *BrokerConfig) error {
@@ -301,7 +322,8 @@ func main() {
 	exec := buildExecutor(cfg)
 	sender := newTelegramSender(cfg.Telegram.BotToken)
 	llm := newOpenAIClient(cfg.LLM)
-	broker := newBroker(cfg, rl, exec, sender, llm)
+	audit := newAuditLogger(cfg.Audit)
+	broker := newBroker(cfg, rl, exec, sender, llm, audit)
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.Telegram.Mode))
 	if mode == "polling" {
@@ -351,6 +373,7 @@ func (b *Broker) processUpdate(update TelegramUpdate) {
 		update: update,
 		sender: b.sender,
 		llm:    b.llm,
+		audit:  b.audit,
 	}
 
 	stages := []pipelineStage{
@@ -381,6 +404,7 @@ func stageExtractMessage(ctx *pipelineContext) bool {
 
 func stageAuth(ctx *pipelineContext) bool {
 	if !isAllowed(ctx.userID, ctx.cfg.Telegram.AllowedUserIDs) {
+		logAudit(ctx, "auth_denied", "unauthorized user", "denied")
 		return sendReply(ctx, "Unauthorized user.")
 	}
 	return false
@@ -388,6 +412,7 @@ func stageAuth(ctx *pipelineContext) bool {
 
 func stageRateLimit(ctx *pipelineContext) bool {
 	if !ctx.rl.allow(ctx.userID) {
+		logAudit(ctx, "rate_limited", "rate limit exceeded", "denied")
 		return sendReply(ctx, "Rate limit exceeded. Try again soon.")
 	}
 	return false
@@ -396,53 +421,66 @@ func stageRateLimit(ctx *pipelineContext) bool {
 func stageRoute(ctx *pipelineContext) bool {
 	if ctx.cfg.LLM.Enabled {
 		if ctx.llm == nil {
+			logAudit(ctx, "llm_error", "llm client not configured", "error")
 			return sendReply(ctx, "LLM error: client not configured")
 		}
 		decision, err := ctx.llm.Map(context.Background(), ctx.msg.Text, ctx.cfg.Policy.CommandAllowlist)
 		if err != nil {
+			logAudit(ctx, "llm_error", err.Error(), "error")
 			return sendReply(ctx, "LLM error: "+err.Error())
 		}
 
 		if strings.EqualFold(decision.Type, "chat") {
 			resp := strings.TrimSpace(decision.Response)
 			if resp == "" {
+				logAudit(ctx, "llm_chat", "empty response", "ok")
 				return sendReply(ctx, "I didn't understand that. Try a command or ask again.")
 			}
+			logAudit(ctx, "llm_chat", "responded", "ok")
 			return sendReply(ctx, resp)
 		}
 
 		cmd := strings.ToLower(strings.TrimSpace(decision.Intent))
 		if cmd == "" {
+			logAudit(ctx, "llm_command_error", "missing intent", "error")
 			return sendReply(ctx, "I couldn't determine a command. Try again.")
 		}
 		if decision.Confidence < ctx.cfg.LLM.ConfidenceThreshold {
+			logAudit(ctx, "llm_command_low_confidence", "low confidence", "denied")
 			return sendReply(ctx, "I am not confident this is a command. Please rephrase or use a direct command.")
 		}
 		if cmd == "help" {
+			logAudit(ctx, "help", "llm requested help", "ok")
 			return sendReply(ctx, "Allowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
 		}
 		ctx.cmd = cmd
 		ctx.args = decision.Args
+		logAudit(ctx, "llm_command", "routed", "ok")
 		return false
 	}
 
 	cmd, args := normalizeCommand(ctx.msg.Text)
 	if cmd == "" {
+		logAudit(ctx, "command_error", "empty command", "error")
 		return sendReply(ctx, "Empty command.")
 	}
 	if cmd == "help" {
+		logAudit(ctx, "help", "direct help", "ok")
 		return sendReply(ctx, "Allowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
 	}
 	ctx.cmd = cmd
 	ctx.args = args
+	logAudit(ctx, "command", "direct", "ok")
 	return false
 }
 
 func stagePolicy(ctx *pipelineContext) bool {
 	if isCommandBlocked(ctx.cmd, ctx.cfg.Policy.CommandBlocklist) {
+		logAudit(ctx, "command_blocked", "blocked", "denied")
 		return sendReply(ctx, "Command blocked.")
 	}
 	if !isCommandAllowed(ctx.cmd, ctx.cfg.Policy.CommandAllowlist) {
+		logAudit(ctx, "command_not_allowed", "not allowed", "denied")
 		return sendReply(ctx, "Command not allowed.")
 	}
 	return false
@@ -457,10 +495,16 @@ func stageExecute(ctx *pipelineContext) bool {
 		Args:    ctx.args,
 	})
 	if err != nil {
+		logAudit(ctx, "execution_error", err.Error(), "error")
 		return sendReply(ctx, "Agent error: "+err.Error())
 	}
 
 	reply := renderResponse(ctx.cmd, resp)
+	if resp.Ok {
+		logAudit(ctx, "execution", "ok", "ok")
+	} else {
+		logAudit(ctx, "execution", resp.Error, "error")
+	}
 	return sendReply(ctx, reply)
 }
 
@@ -469,6 +513,21 @@ func sendReply(ctx *pipelineContext, text string) bool {
 		log.Printf("send telegram: %v", err)
 	}
 	return true
+}
+
+func logAudit(ctx *pipelineContext, eventType, message, outcome string) {
+	if ctx.audit == nil {
+		return
+	}
+	ctx.audit.Log(AuditEvent{
+		Timestamp: time.Now().UTC(),
+		Type:      eventType,
+		UserID:    ctx.userID,
+		ChatID:    ctx.chatID,
+		Command:   ctx.cmd,
+		Outcome:   outcome,
+		Message:   message,
+	})
 }
 
 func (b *Broker) pollLoop() {

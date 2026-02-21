@@ -38,6 +38,7 @@ Prereqs:
 - Go installed (builds the `broker` and `agent` binaries)
 - Telegram bot token and your Telegram user ID
 - OpenAI API key if `llm.enabled` is true
+- A writable path for the audit log file
 
 1. Create local configs from the examples:
 ```
@@ -55,6 +56,7 @@ cp configs/agent.example.json configs/agent.json
 - `execution.local.base_dir`, `execution.local.dynamic_allowlist`, `execution.local.command_allowlist`: required for local mode
 - `llm.enabled`: set to `true` or `false`
 - `llm.api_key`, `llm.model`: required when `llm.enabled` is `true`
+- `audit.file_path`: path to an audit log file (set to enable file logging)
 
 3. Fill in `configs/agent.json` (only if using `execution.mode: "forward"`):
 - `auth_token`: must match `execution.forward_auth_token`
