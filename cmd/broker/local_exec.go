@@ -122,6 +122,20 @@ func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, 
 		return runSafeCat(baseAbs, cwd, args, cfg.Execution.Local.DefaultTimeoutSec, cfg.Execution.Local.MaxOutputKB)
 	case "cd":
 		return runSafeCd(baseAbs, store, chatID, args)
+	case "touch":
+		cwd := store.get(chatID, baseAbs)
+		return runSafeTouch(baseAbs, cwd, args)
+	case "mkdir":
+		cwd := store.get(chatID, baseAbs)
+		return runSafeMkdir(baseAbs, cwd, args)
+	case "count":
+		cwd := store.get(chatID, baseAbs)
+		return runSafeCount(baseAbs, cwd, args)
+	case "find":
+		cwd := store.get(chatID, baseAbs)
+		return runSafeFind(baseAbs, cwd, args)
+	case "ping":
+		return runSafePing(args)
 	default:
 		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "unsupported dynamic command"}
 	}
@@ -175,6 +189,134 @@ func runSafeCat(baseAbs, cwdAbs string, args []string, timeoutSec int, maxKB int
 	return runCommand(baseAbs, "/bin/cat", paths, timeoutSec, maxKB)
 }
 
+func runSafeTouch(baseAbs, cwdAbs string, args []string) api.CommandResponse {
+	if len(args) != 1 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "touch requires a single file path"}
+	}
+	target, err := sanitizePath(baseAbs, cwdAbs, args[0])
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	_ = f.Close()
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
+}
+
+func runSafeMkdir(baseAbs, cwdAbs string, args []string) api.CommandResponse {
+	if len(args) != 1 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "mkdir requires a single directory path"}
+	}
+	target, err := sanitizePath(baseAbs, cwdAbs, args[0])
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
+}
+
+func runSafeCount(baseAbs, cwdAbs string, args []string) api.CommandResponse {
+	target := cwdAbs
+	if len(args) > 1 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "count accepts at most one path"}
+	}
+	if len(args) == 1 {
+		p, err := sanitizePath(baseAbs, cwdAbs, args[0])
+		if err != nil {
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+		}
+		target = p
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	if !info.IsDir() {
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: "1\n"}
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	count := 0
+	for _, e := range entries {
+		if e.Type().IsRegular() {
+			count++
+		}
+	}
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: fmt.Sprintf("%d\n", count)}
+}
+
+func runSafeFind(baseAbs, cwdAbs string, args []string) api.CommandResponse {
+	if len(args) != 1 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "find requires a single name fragment"}
+	}
+	needle := strings.ToLower(strings.TrimSpace(args[0]))
+	if needle == "" {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "find requires a non-empty name fragment"}
+	}
+
+	const maxDepth = 7
+	const maxResults = 200
+	results := []string{}
+
+	baseAbsClean := baseAbs
+	err := filepath.WalkDir(cwdAbs, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(baseAbsClean, path)
+		if err != nil {
+			return err
+		}
+		depth := 0
+		if rel != "." {
+			depth = strings.Count(rel, string(os.PathSeparator))
+		}
+		if depth > maxDepth {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() {
+			name := strings.ToLower(d.Name())
+			if strings.Contains(name, needle) {
+				results = append(results, path)
+				if len(results) >= maxResults {
+					return filepath.SkipDir
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	if len(results) == 0 {
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: "(no matches)\n"}
+	}
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: strings.Join(results, "\n") + "\n"}
+}
+
+func runSafePing(args []string) api.CommandResponse {
+	if len(args) != 1 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "ping requires a single host"}
+	}
+	host := strings.TrimSpace(args[0])
+	if host == "" {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "ping requires a non-empty host"}
+	}
+	if !isSafeHost(host) {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "ping host not allowed"}
+	}
+	return runCommand(".", "/bin/ping", []string{"-c", "4", "-W", "2", host}, 10, 8)
+}
+
 func isAllowedLsFlag(flag string) bool {
 	allowed := map[string]bool{
 		"-a":  true,
@@ -219,6 +361,22 @@ func sanitizePath(baseAbs string, cwdAbs string, p string) (string, error) {
 	}
 
 	return abs, nil
+}
+
+func isSafeHost(host string) bool {
+	if len(host) > 253 {
+		return false
+	}
+	for _, r := range host {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' {
+			continue
+		}
+		return false
+	}
+	if strings.HasPrefix(host, "-") || strings.HasSuffix(host, "-") || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
+		return false
+	}
+	return true
 }
 
 func runSafeCd(baseAbs string, store *chatCWDStore, chatID int64, args []string) api.CommandResponse {

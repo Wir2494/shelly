@@ -5,12 +5,14 @@
     "default_timeout_sec": 10,
     "max_output_kb": 8,
     "base_dir": "/home/wir",
-    "dynamic_allowlist": ["ls", "ll", "cat", "pwd", "cd"],
+    "dynamic_allowlist": ["ls", "ll", "cat", "pwd", "cd", "touch", "mkdir", "count", "find", "ping"],
     "command_allowlist": {
       "status": { "exec": "/usr/bin/uptime", "args": [] },
       "disk": { "exec": "/bin/df", "args": ["-h"] },
       "memory": { "exec": "/usr/bin/free", "args": ["-h"] },
-      "users": { "exec": "/usr/bin/who", "args": [] }
+      "users": { "exec": "/usr/bin/who", "args": [] },
+      "date": { "exec": "/bin/date", "args": [] },
+      "nano": { "exec": "/usr/bin/nano", "args": [] }
     },
     "command_blocklist": [
       "shutdown",

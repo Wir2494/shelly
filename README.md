@@ -87,6 +87,11 @@ The local executor (or agent) supports safe, scoped filesystem commands under `b
 - `ls`, `ll` (subset of flags allowed)
 - `cat <file>`
 - `cd <dir>` (per-chat working directory)
+- `touch <file>`
+- `mkdir <dir>`
+- `count [path]` (counts regular files in a directory, non-recursive)
+- `find <name>` (finds directories by name fragment up to depth 7)
+- `ping <host>` (restricted host format)
 
 Configure in `configs/agent.json`:
 - `execution.base_dir`: e.g. `/home/wir`
