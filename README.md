@@ -1,54 +1,82 @@
-# Telegram Broker + Home Agent (VPS Middle-Man)
+# Telegram Broker + Home Agent
 
 This repo contains two small Go services:
-- `broker`: talks to Telegram, authorizes, rate-limits, and either executes allowlisted commands locally or forwards them to a home agent.
-- `agent`: optional. Runs on your home server, executes allowlisted commands and returns output.
+- `broker`: talks to Telegram, authorizes, rate-limits, and either executes allowlisted commands locally or forwards them to a local agent.
+- `agent`: runs on your machine, executes allowlisted commands and returns output.
 
-## Quick Architecture
-- Telegram -> Broker (polling or webhook)
-- Broker -> local execution (single-host mode)
-- OR Broker -> Home Agent via reverse SSH tunnel (VPS loopback -> home loopback)
+## Architecture
+Flow:
+- Telegram -> Broker (polling)
+- Broker -> LLM (if `llm_enabled` is true)
+- Broker -> local execution (local mode)
+- OR Broker -> Agent (forward mode)
 - Agent executes allowlisted commands only
+- Broker -> Telegram (response)
 
-## Build
-```bash
-go build -o broker ./cmd/broker
-go build -o agent ./cmd/agent
+Diagram:
+```
+Telegram
+   |
+   v
+Broker (polling, auth, rate-limit)
+   | \
+   |  \----> LLM (if llm_enabled)
+   |            |
+   |            v
+   |        decision: chat or command
+   |
+   +--> local exec (local mode)
+   |
+   +--> Agent (forward mode) -> allowed command -> stdout/stderr
+   |
+   v
+Telegram response
 ```
 
-## Config
+## Instructions
+Prereqs:
+- Go installed (builds the `broker` and `agent` binaries)
+- Telegram bot token and your Telegram user ID
+- OpenAI API key if `llm_enabled` is true
 
-Create local configs from the examples:
+1. Create local configs from the examples:
 ```
 cp configs/broker.example.json configs/broker.json
 cp configs/agent.example.json configs/agent.json
 ```
 
-Then edit:
-- `configs/broker.json`
-  - `telegram_bot_token`
-  - `telegram_allowed_user_ids`
-  - `execution_mode` (`local` or `forward`)
-  - `forward_auth_token` (only for `forward` mode)
-  - `local_command_allowlist`, `local_dynamic_allowlist`, `local_base_dir` (for `local` mode)
-  - `llm_enabled`, `llm_api_key`, `llm_model` (optional, for natural language; use a model that supports JSON schema outputs)
-- `configs/agent.json`
-  - `auth_token` (must match `forward_auth_token`)
-  - `base_dir`
+2. Fill in `configs/broker.json`:
+- `telegram_bot_token`: your bot token
+- `telegram_allowed_user_ids`: your user ID(s)
+- `telegram_mode`: set to `polling`
+- `execution_mode`: `local` or `forward`
+- `forward_url`: required if `execution_mode` is `forward` (e.g. `http://127.0.0.1:8081/command`)
+- `forward_auth_token`: shared secret between broker and agent (forward mode)
+- `local_base_dir`, `local_dynamic_allowlist`, `local_command_allowlist`: required for local mode
+- `llm_enabled`: set to `true` or `false`
+- `llm_api_key`, `llm_model`: required when `llm_enabled` is `true`
 
-## Polling Mode (No TLS/Domain Needed)
-If you do not have a domain with TLS, set:
-- `configs/broker.json` -> `telegram_mode` = `polling`
+3. Fill in `configs/agent.json` (only if using `execution_mode: "forward"`):
+- `auth_token`: must match `forward_auth_token`
+- `base_dir`: base directory for dynamic commands
+- `dynamic_allowlist`: allowed dynamic commands
+- `command_allowlist`: allowed static commands
 
-In polling mode, the VPS broker calls Telegram `getUpdates` directly. No inbound HTTPS is required.
+4. Build binaries:
+```
+go build -o broker ./cmd/broker
+go build -o agent ./cmd/agent
+```
 
-## Simplified Single-Host Mode (No VPS Needed)
-Run only the broker on your home server:
-- `execution_mode` = `local`
-- `forward_url` can be empty
-- Configure `local_command_allowlist`, `local_dynamic_allowlist`, `local_base_dir`
-
-In this mode, the broker polls Telegram and executes commands locally.
+5. Run the services (same machine):
+- Broker:
+```
+./broker -config configs/broker.json
+```
+- Agent (only if `execution_mode` is `forward`):
+```
+./agent -config configs/agent.json
+```
 
 ## Dynamic Commands (Scoped to a Base Directory)
 The local executor (or agent) supports safe, scoped filesystem commands under `base_dir`:
@@ -64,43 +92,10 @@ Configure in `configs/agent.json`:
 
 All paths are constrained to `base_dir`. Paths outside it are rejected.
 
-## Systemd (examples)
-- VPS: `systemd/broker.service` (configured for `/home/wir/broker`)
-- Home server: `systemd/agent.service`
-- Home server SSH tunnel: `systemd/ssh-tunnel.service.example` (copy to `/etc/systemd/system/ssh-tunnel.service` and fill in your host/user)
-
-Adjust:
-- `USER@VPS_HOST` (in `systemd/ssh-tunnel.service`)
-- install paths (`/home/wir/broker` on VPS, `/opt/personal_ai` on home server)
-- service users as desired
-
-## Reverse SSH Tunnel
-Home server opens:
-```
-ssh -N -R 127.0.0.1:18080:127.0.0.1:8080 USER@VPS_HOST
-```
-The broker calls `http://127.0.0.1:18080/command` on the VPS.
-
-Note: This repo config uses the agent on `127.0.0.1:8081`. The tunnel service reflects that.
-
-## Telegram Webhook vs Polling
-If you do not have a domain with TLS, use polling:
-- Set `telegram_mode` to `polling` in `configs/broker.json`.
-- No webhook required.
-
-If you have a domain with TLS, you can use webhooks:
-```
-https://YOUR_VPS_DOMAIN/telegram/webhook
-```
-The broker listens on `telegram_webhook_path` and should be behind TLS (Caddy/Nginx).
-
 ## Security Model
-- Allowlist only.
-- Blocklist enforced in both broker and agent.
-- Auth token between broker and agent (`X-Auth-Token`).
-- Rate limits on broker.
+The system is allowlist-first. The broker authorizes Telegram users by ID, enforces per-user rate limits, and only accepts commands present in the allowlist while denying any in the blocklist. When running in forward mode, the broker and agent authenticate with a shared `X-Auth-Token`. Dynamic commands are constrained to a configured base directory and sanitized to prevent path escapes.
 
-## LLM Command Routing (Optional)
+## LLM Command Routing
 The broker can map natural language into allowed commands using an LLM.
 When enabled, the broker sends the user text to the OpenAI Responses API and expects a
 JSON schema response that classifies the message as either:
