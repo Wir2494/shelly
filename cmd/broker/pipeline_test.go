@@ -26,8 +26,10 @@ func (e executorStub) Execute(ctx context.Context, req api.CommandRequest) (*api
 
 func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 	cfg := &BrokerConfig{
-		TelegramBotToken:       "token",
-		TelegramAllowedUserIDs: []int64{1},
+		Telegram: TelegramConfig{
+			BotToken:       "token",
+			AllowedUserIDs: []int64{1},
+		},
 	}
 	rl := newRateLimiter(time.Minute, 0)
 	called := false
@@ -58,9 +60,13 @@ func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 
 func TestPipelineHelpSendsAllowlist(t *testing.T) {
 	cfg := &BrokerConfig{
-		TelegramBotToken:       "token",
-		TelegramAllowedUserIDs: []int64{1},
-		CommandAllowlist:       []string{"status", "disk"},
+		Telegram: TelegramConfig{
+			BotToken:       "token",
+			AllowedUserIDs: []int64{1},
+		},
+		Policy: PolicyConfig{
+			CommandAllowlist: []string{"status", "disk"},
+		},
 	}
 	rl := newRateLimiter(time.Minute, 0)
 	called := false
@@ -84,7 +90,7 @@ func TestPipelineHelpSendsAllowlist(t *testing.T) {
 	if len(sender.calls) != 1 {
 		t.Fatalf("expected 1 send call, got %d", len(sender.calls))
 	}
-	expected := "Allowed commands: " + strings.Join(cfg.CommandAllowlist, ", ")
+	expected := "Allowed commands: " + strings.Join(cfg.Policy.CommandAllowlist, ", ")
 	if sender.calls[0] != expected {
 		t.Fatalf("unexpected response: %q", sender.calls[0])
 	}

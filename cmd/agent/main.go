@@ -21,8 +21,12 @@ import (
 )
 
 type AgentConfig struct {
-	ListenAddr        string                        `json:"listen_addr"`
-	AuthToken         string                        `json:"auth_token"`
+	ListenAddr string          `json:"listen_addr"`
+	AuthToken  string          `json:"auth_token"`
+	Execution  AgentExecConfig `json:"execution"`
+}
+
+type AgentExecConfig struct {
 	DefaultTimeoutSec int                           `json:"default_timeout_sec"`
 	MaxOutputKB       int                           `json:"max_output_kb"`
 	CommandAllowlist  map[string]api.AllowedCommand `json:"command_allowlist"`
@@ -43,11 +47,11 @@ func loadConfig(path string) (*AgentConfig, error) {
 	if cfg.ListenAddr == "" {
 		cfg.ListenAddr = "127.0.0.1:8080"
 	}
-	if cfg.DefaultTimeoutSec <= 0 {
-		cfg.DefaultTimeoutSec = 10
+	if cfg.Execution.DefaultTimeoutSec <= 0 {
+		cfg.Execution.DefaultTimeoutSec = 10
 	}
-	if cfg.MaxOutputKB <= 0 {
-		cfg.MaxOutputKB = 8
+	if cfg.Execution.MaxOutputKB <= 0 {
+		cfg.Execution.MaxOutputKB = 8
 	}
 	return &cfg, nil
 }
@@ -99,24 +103,24 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, api.CommandResponse{Ok: false, Error: "empty command"})
 			return
 		}
-		if isBlocked(cmdName, cfg.CommandBlocklist) {
+		if isBlocked(cmdName, cfg.Execution.CommandBlocklist) {
 			writeJSON(w, http.StatusForbidden, api.CommandResponse{Ok: false, Error: "command blocked"})
 			return
 		}
 
-		if isDynamicAllowed(cmdName, cfg.DynamicAllowlist) {
+		if isDynamicAllowed(cmdName, cfg.Execution.DynamicAllowlist) {
 			resp := handleDynamicCommand(cfg, chatCWD, req.ChatID, cmdName, req.Args)
 			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 
-		allowed, ok := cfg.CommandAllowlist[cmdName]
+		allowed, ok := cfg.Execution.CommandAllowlist[cmdName]
 		if !ok {
 			writeJSON(w, http.StatusForbidden, api.CommandResponse{Ok: false, Error: "command not allowed"})
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.DefaultTimeoutSec)*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.Execution.DefaultTimeoutSec)*time.Second)
 		defer cancel()
 
 		cmd := exec.CommandContext(ctx, allowed.Exec, allowed.Args...)
@@ -135,8 +139,8 @@ func main() {
 			resp.Error = err.Error()
 		}
 
-		resp.Stdout = limitOutput(stdout.String(), cfg.MaxOutputKB)
-		resp.Stderr = limitOutput(stderr.String(), cfg.MaxOutputKB)
+		resp.Stdout = limitOutput(stdout.String(), cfg.Execution.MaxOutputKB)
+		resp.Stderr = limitOutput(stderr.String(), cfg.Execution.MaxOutputKB)
 
 		writeJSON(w, http.StatusOK, resp)
 	})
@@ -188,7 +192,7 @@ func (s *chatCWDStore) set(chatID int64, dir string) {
 }
 
 func handleDynamicCommand(cfg *AgentConfig, store *chatCWDStore, chatID int64, cmd string, args []string) api.CommandResponse {
-	base := strings.TrimSpace(cfg.BaseDir)
+	base := strings.TrimSpace(cfg.Execution.BaseDir)
 	if base == "" {
 		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "base_dir not configured"}
 	}
@@ -204,10 +208,10 @@ func handleDynamicCommand(cfg *AgentConfig, store *chatCWDStore, chatID int64, c
 		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: cwd + "\n"}
 	case "ls", "ll":
 		cwd := store.get(chatID, baseAbs)
-		return runSafeList(baseAbs, cwd, cmd, args, cfg.DefaultTimeoutSec, cfg.MaxOutputKB)
+		return runSafeList(baseAbs, cwd, cmd, args, cfg.Execution.DefaultTimeoutSec, cfg.Execution.MaxOutputKB)
 	case "cat":
 		cwd := store.get(chatID, baseAbs)
-		return runSafeCat(baseAbs, cwd, args, cfg.DefaultTimeoutSec, cfg.MaxOutputKB)
+		return runSafeCat(baseAbs, cwd, args, cfg.Execution.DefaultTimeoutSec, cfg.Execution.MaxOutputKB)
 	case "cd":
 		return runSafeCd(baseAbs, store, chatID, args)
 	default:

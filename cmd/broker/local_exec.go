@@ -31,18 +31,18 @@ func (e *localExecutor) Execute(ctx context.Context, req api.CommandRequest) (*a
 		return &resp, nil
 	}
 
-	if isDynamicAllowed(cmdName, e.cfg.LocalDynamicAllowlist) {
+	if isDynamicAllowed(cmdName, e.cfg.Execution.Local.DynamicAllowlist) {
 		resp := handleDynamicCommand(e.cfg, e.chatCWD, req.ChatID, cmdName, req.Args)
 		return &resp, nil
 	}
 
-	allowed, ok := e.cfg.LocalCommandAllowlist[cmdName]
+	allowed, ok := e.cfg.Execution.Local.CommandAllowlist[cmdName]
 	if !ok {
 		resp := api.CommandResponse{Ok: false, ExitCode: 1, Error: "command not allowed"}
 		return &resp, nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.cfg.LocalDefaultTimeoutSec)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.cfg.Execution.Local.DefaultTimeoutSec)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, allowed.Exec, allowed.Args...)
@@ -60,8 +60,8 @@ func (e *localExecutor) Execute(ctx context.Context, req api.CommandRequest) (*a
 		resp.ExitCode = exitCode(err)
 		resp.Error = err.Error()
 	}
-	resp.Stdout = limitOutput(stdout.String(), e.cfg.LocalMaxOutputKB)
-	resp.Stderr = limitOutput(stderr.String(), e.cfg.LocalMaxOutputKB)
+	resp.Stdout = limitOutput(stdout.String(), e.cfg.Execution.Local.MaxOutputKB)
+	resp.Stderr = limitOutput(stderr.String(), e.cfg.Execution.Local.MaxOutputKB)
 	return &resp, nil
 }
 
@@ -100,14 +100,14 @@ func (s *chatCWDStore) set(chatID int64, dir string) {
 }
 
 func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, cmd string, args []string) api.CommandResponse {
-	base := strings.TrimSpace(cfg.LocalBaseDir)
+	base := strings.TrimSpace(cfg.Execution.Local.BaseDir)
 	if base == "" {
-		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "local_base_dir not configured"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "execution.local.base_dir not configured"}
 	}
 
 	baseAbs, err := filepath.Abs(base)
 	if err != nil {
-		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "invalid local_base_dir"}
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "invalid execution.local.base_dir"}
 	}
 
 	switch strings.ToLower(cmd) {
@@ -116,10 +116,10 @@ func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, 
 		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: cwd + "\n"}
 	case "ls", "ll":
 		cwd := store.get(chatID, baseAbs)
-		return runSafeList(baseAbs, cwd, cmd, args, cfg.LocalDefaultTimeoutSec, cfg.LocalMaxOutputKB)
+		return runSafeList(baseAbs, cwd, cmd, args, cfg.Execution.Local.DefaultTimeoutSec, cfg.Execution.Local.MaxOutputKB)
 	case "cat":
 		cwd := store.get(chatID, baseAbs)
-		return runSafeCat(baseAbs, cwd, args, cfg.LocalDefaultTimeoutSec, cfg.LocalMaxOutputKB)
+		return runSafeCat(baseAbs, cwd, args, cfg.Execution.Local.DefaultTimeoutSec, cfg.Execution.Local.MaxOutputKB)
 	case "cd":
 		return runSafeCd(baseAbs, store, chatID, args)
 	default:

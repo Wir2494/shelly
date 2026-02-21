@@ -27,7 +27,7 @@ func TestRemoteExecutorSendsAuthAndParsesResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := &BrokerConfig{ForwardURL: server.URL, ForwardAuthToken: "secret"}
+	cfg := &BrokerConfig{Execution: ExecutionConfig{ForwardURL: server.URL, ForwardAuthToken: "secret"}}
 	exec := newRemoteExecutor(cfg)
 
 	resp, err := exec.Execute(context.Background(), api.CommandRequest{Command: "status"})
@@ -48,7 +48,7 @@ func TestRemoteExecutorNonOKStatusReturnsError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := &BrokerConfig{ForwardURL: server.URL}
+	cfg := &BrokerConfig{Execution: ExecutionConfig{ForwardURL: server.URL}}
 	exec := newRemoteExecutor(cfg)
 
 	_, err := exec.Execute(context.Background(), api.CommandRequest{Command: "status"})

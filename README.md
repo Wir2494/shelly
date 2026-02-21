@@ -7,7 +7,7 @@ This repo contains two small Go services:
 ## Architecture
 Flow:
 - Telegram -> Broker (polling)
-- Broker -> LLM (if `llm_enabled` is true)
+- Broker -> LLM (if `llm.enabled` is true)
 - Broker -> local execution (local mode)
 - OR Broker -> Agent (forward mode)
 - Agent executes allowlisted commands only
@@ -20,7 +20,7 @@ Telegram
    v
 Broker (polling, auth, rate-limit)
    | \
-   |  \----> LLM (if llm_enabled)
+   |  \----> LLM (if llm.enabled)
    |            |
    |            v
    |        decision: chat or command
@@ -37,7 +37,7 @@ Telegram response
 Prereqs:
 - Go installed (builds the `broker` and `agent` binaries)
 - Telegram bot token and your Telegram user ID
-- OpenAI API key if `llm_enabled` is true
+- OpenAI API key if `llm.enabled` is true
 
 1. Create local configs from the examples:
 ```
@@ -46,21 +46,21 @@ cp configs/agent.example.json configs/agent.json
 ```
 
 2. Fill in `configs/broker.json`:
-- `telegram_bot_token`: your bot token
-- `telegram_allowed_user_ids`: your user ID(s)
-- `telegram_mode`: set to `polling`
-- `execution_mode`: `local` or `forward`
-- `forward_url`: required if `execution_mode` is `forward` (e.g. `http://127.0.0.1:8081/command`)
-- `forward_auth_token`: shared secret between broker and agent (forward mode)
-- `local_base_dir`, `local_dynamic_allowlist`, `local_command_allowlist`: required for local mode
-- `llm_enabled`: set to `true` or `false`
-- `llm_api_key`, `llm_model`: required when `llm_enabled` is `true`
+- `telegram.bot_token`: your bot token
+- `telegram.allowed_user_ids`: your user ID(s)
+- `telegram.mode`: set to `polling`
+- `execution.mode`: `local` or `forward`
+- `execution.forward_url`: required if `execution.mode` is `forward` (e.g. `http://127.0.0.1:8081/command`)
+- `execution.forward_auth_token`: shared secret between broker and agent (forward mode)
+- `execution.local.base_dir`, `execution.local.dynamic_allowlist`, `execution.local.command_allowlist`: required for local mode
+- `llm.enabled`: set to `true` or `false`
+- `llm.api_key`, `llm.model`: required when `llm.enabled` is `true`
 
-3. Fill in `configs/agent.json` (only if using `execution_mode: "forward"`):
-- `auth_token`: must match `forward_auth_token`
-- `base_dir`: base directory for dynamic commands
-- `dynamic_allowlist`: allowed dynamic commands
-- `command_allowlist`: allowed static commands
+3. Fill in `configs/agent.json` (only if using `execution.mode: "forward"`):
+- `auth_token`: must match `execution.forward_auth_token`
+- `execution.base_dir`: base directory for dynamic commands
+- `execution.dynamic_allowlist`: allowed dynamic commands
+- `execution.command_allowlist`: allowed static commands
 
 4. Build binaries:
 ```
@@ -73,7 +73,7 @@ go build -o agent ./cmd/agent
 ```
 ./broker -config configs/broker.json
 ```
-- Agent (only if `execution_mode` is `forward`):
+- Agent (only if `execution.mode` is `forward`):
 ```
 ./agent -config configs/agent.json
 ```
@@ -87,8 +87,8 @@ The local executor (or agent) supports safe, scoped filesystem commands under `b
 - `cd <dir>` (per-chat working directory)
 
 Configure in `configs/agent.json`:
-- `base_dir`: e.g. `/home/wir`
-- `dynamic_allowlist`: e.g. `["ls","ll","cat","pwd","cd"]`
+- `execution.base_dir`: e.g. `/home/wir`
+- `execution.dynamic_allowlist`: e.g. `["ls","ll","cat","pwd","cd"]`
 
 All paths are constrained to `base_dir`. Paths outside it are rejected.
 
@@ -102,15 +102,15 @@ JSON schema response that classifies the message as either:
 - `command` with `intent` and `args`
 - `chat` with a `response`
 
-If the returned `confidence` is below `llm_confidence_threshold`, the broker will ask
+If the returned `confidence` is below `llm.confidence_threshold`, the broker will ask
 the user to rephrase or use a direct command.
 
 Configure in `configs/broker.json`:
-- `llm_enabled`: set to `true`
-- `llm_api_key`: your OpenAI API key
-- `llm_model`: model name (default `gpt-5.2`)
-- `llm_timeout_sec`: request timeout (default `15`)
-- `llm_confidence_threshold`: minimum confidence (default `0.7`)
+- `llm.enabled`: set to `true`
+- `llm.api_key`: your OpenAI API key
+- `llm.model`: model name (default `gpt-5.2`)
+- `llm.timeout_sec`: request timeout (default `15`)
+- `llm.confidence_threshold`: minimum confidence (default `0.7`)
 
 Notes:
 - LLM routing only maps to the existing `command_allowlist`.

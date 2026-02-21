@@ -1,45 +1,55 @@
 {
   "listen_addr": "127.0.0.1:8081",
-  "telegram_bot_token": "CHANGE_ME_BOT_TOKEN",
-  "telegram_mode": "polling",
-  "telegram_webhook_path": "/telegram/webhook",
-  "telegram_allowed_user_ids": [123456789],
-  "execution_mode": "local",
-  "forward_url": "",
-  "forward_auth_token": "CHANGE_ME_SHARED_SECRET",
-  "llm_enabled": false,
-  "llm_api_key": "CHANGE_ME_OPENAI_API_KEY",
-  "llm_model": "gpt-5.2",
-  "llm_timeout_sec": 15,
-  "llm_confidence_threshold": 0.7,
-  "rate_limit_per_minute": 20,
-  "poll_interval_sec": 3,
-  "local_default_timeout_sec": 10,
-  "local_max_output_kb": 8,
-  "local_base_dir": "/home/wir",
-  "local_dynamic_allowlist": ["ls", "ll", "cat", "pwd", "cd"],
-  "local_command_allowlist": {
-    "status": { "exec": "/usr/bin/uptime", "args": [] },
-    "disk": { "exec": "/bin/df", "args": ["-h"] },
-    "memory": { "exec": "/usr/bin/free", "args": ["-h"] },
-    "users": { "exec": "/usr/bin/who", "args": [] }
+  "telegram": {
+    "bot_token": "CHANGE_ME_BOT_TOKEN",
+    "mode": "polling",
+    "webhook_path": "/telegram/webhook",
+    "allowed_user_ids": [123456789],
+    "poll_interval_sec": 3
   },
-  "command_allowlist": ["status", "disk", "memory", "users", "ls", "ll", "cat", "pwd", "cd"],
-  "command_blocklist": [
-    "shutdown",
-    "reboot",
-    "adduser",
-    "useradd",
-    "passwd",
-    "usermod",
-    "deluser",
-    "rm",
-    "mkfs",
-    "dd",
-    "mount",
-    "umount",
-    "chmod",
-    "chown",
-    "sudo"
-  ]
+  "execution": {
+    "mode": "local",
+    "forward_url": "",
+    "forward_auth_token": "CHANGE_ME_SHARED_SECRET",
+    "local": {
+      "default_timeout_sec": 10,
+      "max_output_kb": 8,
+      "base_dir": "/home/wir",
+      "dynamic_allowlist": ["ls", "ll", "cat", "pwd", "cd"],
+      "command_allowlist": {
+        "status": { "exec": "/usr/bin/uptime", "args": [] },
+        "disk": { "exec": "/bin/df", "args": ["-h"] },
+        "memory": { "exec": "/usr/bin/free", "args": ["-h"] },
+        "users": { "exec": "/usr/bin/who", "args": [] }
+      }
+    }
+  },
+  "llm": {
+    "enabled": false,
+    "api_key": "CHANGE_ME_OPENAI_API_KEY",
+    "model": "gpt-5.2",
+    "timeout_sec": 15,
+    "confidence_threshold": 0.7
+  },
+  "policy": {
+    "rate_limit_per_minute": 20,
+    "command_allowlist": ["status", "disk", "memory", "users", "ls", "ll", "cat", "pwd", "cd"],
+    "command_blocklist": [
+      "shutdown",
+      "reboot",
+      "adduser",
+      "useradd",
+      "passwd",
+      "usermod",
+      "deluser",
+      "rm",
+      "mkfs",
+      "dd",
+      "mount",
+      "umount",
+      "chmod",
+      "chown",
+      "sudo"
+    ]
+  }
 }

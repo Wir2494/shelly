@@ -22,8 +22,8 @@ type remoteExecutor struct {
 
 func newRemoteExecutor(cfg *BrokerConfig) *remoteExecutor {
 	return &remoteExecutor{
-		forwardURL:   cfg.ForwardURL,
-		authToken:    cfg.ForwardAuthToken,
+		forwardURL:   cfg.Execution.ForwardURL,
+		authToken:    cfg.Execution.ForwardAuthToken,
 		client:       &http.Client{Timeout: 15 * time.Second},
 		maxBodyBytes: 1 << 20,
 	}

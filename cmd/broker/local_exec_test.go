@@ -10,11 +10,15 @@ import (
 
 func TestLocalExecutorRunsAllowlistedCommand(t *testing.T) {
 	cfg := &BrokerConfig{
-		ExecutionMode:          "local",
-		LocalDefaultTimeoutSec: 2,
-		LocalMaxOutputKB:       8,
-		LocalCommandAllowlist: map[string]api.AllowedCommand{
-			"echo": {Exec: "/bin/echo", Args: []string{"hello"}},
+		Execution: ExecutionConfig{
+			Mode: "local",
+			Local: LocalExecutionConfig{
+				DefaultTimeoutSec: 2,
+				MaxOutputKB:       8,
+				CommandAllowlist: map[string]api.AllowedCommand{
+					"echo": {Exec: "/bin/echo", Args: []string{"hello"}},
+				},
+			},
 		},
 	}
 
@@ -34,11 +38,15 @@ func TestLocalExecutorRunsAllowlistedCommand(t *testing.T) {
 func TestLocalExecutorDynamicPwd(t *testing.T) {
 	base := t.TempDir()
 	cfg := &BrokerConfig{
-		ExecutionMode:          "local",
-		LocalDefaultTimeoutSec: 2,
-		LocalMaxOutputKB:       8,
-		LocalBaseDir:           base,
-		LocalDynamicAllowlist:  []string{"pwd"},
+		Execution: ExecutionConfig{
+			Mode: "local",
+			Local: LocalExecutionConfig{
+				DefaultTimeoutSec: 2,
+				MaxOutputKB:       8,
+				BaseDir:           base,
+				DynamicAllowlist:  []string{"pwd"},
+			},
+		},
 	}
 
 	exec := newLocalExecutor(cfg)
