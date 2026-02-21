@@ -425,6 +425,10 @@ func stageRoute(ctx *pipelineContext) bool {
 		logAudit(ctx, "command", "direct ping bypass", "ok")
 		return false
 	}
+	if isCapabilityQuestion(ctx.msg.Text) {
+		logAudit(ctx, "help", "capabilities question", "ok")
+		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
+	}
 	if ctx.cfg.LLM.Enabled {
 		if ctx.llm == nil {
 			logAudit(ctx, "llm_error", "llm client not configured", "error")
@@ -545,6 +549,28 @@ func parseDirectCommand(text string, allowlist []string) (string, []string, bool
 		return "", nil, false
 	}
 	return cmd, args, true
+}
+
+func isCapabilityQuestion(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	phrases := []string{
+		"what can you do",
+		"what can this do",
+		"what can the system do",
+		"help",
+		"commands",
+		"capabilities",
+		"what are the commands",
+	}
+	for _, p := range phrases {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Broker) pollLoop() {

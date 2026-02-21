@@ -201,3 +201,36 @@ func TestPipelinePingBypassesLLM(t *testing.T) {
 		t.Fatalf("expected llm not to be called")
 	}
 }
+
+func TestPipelineCapabilitiesQuestionReturnsHelp(t *testing.T) {
+	cfg := &BrokerConfig{
+		Telegram: TelegramConfig{
+			BotToken:       "token",
+			AllowedUserIDs: []int64{1},
+		},
+		Policy: PolicyConfig{
+			CommandAllowlist: []string{"status", "disk"},
+		},
+	}
+	rl := newRateLimiter(time.Minute, 0)
+	exec := executorStub(func(req api.CommandRequest) (*api.CommandResponse, error) {
+		return &api.CommandResponse{Ok: true, ExitCode: 0}, nil
+	})
+	sender := &senderStub{}
+	broker := newBroker(cfg, rl, exec, sender, nil, nil)
+
+	update := TelegramUpdate{Message: &TelegramMessage{
+		From: TelegramUser{ID: 1},
+		Chat: TelegramChat{ID: 99},
+		Text: "What can you do?",
+	}}
+
+	broker.processUpdate(update)
+
+	if len(sender.calls) != 1 {
+		t.Fatalf("expected 1 response, got %d", len(sender.calls))
+	}
+	if !strings.Contains(sender.calls[0], "Allowed commands:") {
+		t.Fatalf("expected capabilities response, got %q", sender.calls[0])
+	}
+}
