@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,12 @@ func (s *senderStub) send(_ string, _ int64, text string) error {
 	return nil
 }
 
+type executorStub func(req api.CommandRequest) (*api.CommandResponse, error)
+
+func (e executorStub) Execute(ctx context.Context, req api.CommandRequest) (*api.CommandResponse, error) {
+	return e(req)
+}
+
 func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 	cfg := &BrokerConfig{
 		TelegramBotToken:       "token",
@@ -24,10 +31,10 @@ func TestPipelineUnauthorizedStopsBeforeExecute(t *testing.T) {
 	}
 	rl := newRateLimiter(time.Minute, 0)
 	called := false
-	exec := func(req api.CommandRequest) (*api.CommandResponse, error) {
+	exec := executorStub(func(req api.CommandRequest) (*api.CommandResponse, error) {
 		called = true
 		return &api.CommandResponse{Ok: true, ExitCode: 0}, nil
-	}
+	})
 	sender := &senderStub{}
 
 	update := TelegramUpdate{Message: &TelegramMessage{
@@ -57,10 +64,10 @@ func TestPipelineHelpSendsAllowlist(t *testing.T) {
 	}
 	rl := newRateLimiter(time.Minute, 0)
 	called := false
-	exec := func(req api.CommandRequest) (*api.CommandResponse, error) {
+	exec := executorStub(func(req api.CommandRequest) (*api.CommandResponse, error) {
 		called = true
 		return &api.CommandResponse{Ok: true, ExitCode: 0}, nil
-	}
+	})
 	sender := &senderStub{}
 
 	update := TelegramUpdate{Message: &TelegramMessage{

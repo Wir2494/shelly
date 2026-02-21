@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -199,14 +200,16 @@ func isCommandBlocked(cmd string, block []string) bool {
 	return false
 }
 
-type commandExecutor func(req api.CommandRequest) (*api.CommandResponse, error)
+type Executor interface {
+	Execute(ctx context.Context, req api.CommandRequest) (*api.CommandResponse, error)
+}
 
 type telegramSender func(token string, chatID int64, text string) error
 
 type pipelineContext struct {
 	cfg    *BrokerConfig
 	rl     *rateLimiter
-	exec   commandExecutor
+	exec   Executor
 	update TelegramUpdate
 	msg    *TelegramMessage
 	userID int64
@@ -235,15 +238,12 @@ func validateExecutionConfig(cfg *BrokerConfig) error {
 	return nil
 }
 
-func buildExecutor(cfg *BrokerConfig) commandExecutor {
+func buildExecutor(cfg *BrokerConfig) Executor {
 	mode := strings.ToLower(strings.TrimSpace(cfg.ExecutionMode))
 	if mode == "local" {
-		local := newLocalExecutor(cfg)
-		return local.Execute
+		return newLocalExecutor(cfg)
 	}
-	return func(req api.CommandRequest) (*api.CommandResponse, error) {
-		return forwardCommand(cfg, req)
-	}
+	return newRemoteExecutor(cfg)
 }
 
 func main() {
@@ -301,11 +301,11 @@ func main() {
 	}
 }
 
-func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, update TelegramUpdate) {
+func processUpdate(cfg *BrokerConfig, rl *rateLimiter, exec Executor, update TelegramUpdate) {
 	processUpdateWithSender(cfg, rl, exec, update, sendTelegramMessage)
 }
 
-func processUpdateWithSender(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor, update TelegramUpdate, sender telegramSender) {
+func processUpdateWithSender(cfg *BrokerConfig, rl *rateLimiter, exec Executor, update TelegramUpdate, sender telegramSender) {
 	ctx := &pipelineContext{
 		cfg:    cfg,
 		rl:     rl,
@@ -407,7 +407,7 @@ func stagePolicy(ctx *pipelineContext) bool {
 }
 
 func stageExecute(ctx *pipelineContext) bool {
-	resp, err := ctx.exec(api.CommandRequest{
+	resp, err := ctx.exec.Execute(context.Background(), api.CommandRequest{
 		Command: ctx.cmd,
 		UserID:  ctx.userID,
 		ChatID:  ctx.chatID,
@@ -429,7 +429,7 @@ func sendReply(ctx *pipelineContext, text string) bool {
 	return true
 }
 
-func pollLoop(cfg *BrokerConfig, rl *rateLimiter, exec commandExecutor) {
+func pollLoop(cfg *BrokerConfig, rl *rateLimiter, exec Executor) {
 	client := &http.Client{Timeout: 35 * time.Second}
 	var offset int64
 	for {
@@ -619,37 +619,6 @@ func mapWithLLM(cfg *BrokerConfig, userText string) (*api.LLMDecision, error) {
 	}
 
 	return nil, fmt.Errorf("llm returned no usable output")
-}
-
-func forwardCommand(cfg *BrokerConfig, req api.CommandRequest) (*api.CommandResponse, error) {
-	body, _ := json.Marshal(req)
-	httpReq, err := http.NewRequest(http.MethodPost, cfg.ForwardURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if cfg.ForwardAuthToken != "" {
-		httpReq.Header.Set("X-Auth-Token", cfg.ForwardAuthToken)
-	}
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent status %d", resp.StatusCode)
-	}
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	var cr api.CommandResponse
-	if err := json.Unmarshal(respBody, &cr); err != nil {
-		return nil, err
-	}
-	return &cr, nil
 }
 
 func renderResponse(cmd string, resp *api.CommandResponse) string {

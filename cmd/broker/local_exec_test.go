@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestLocalExecutorRunsAllowlistedCommand(t *testing.T) {
 	}
 
 	exec := newLocalExecutor(cfg)
-	resp, err := exec.Execute(api.CommandRequest{Command: "echo"})
+	resp, err := exec.Execute(context.Background(), api.CommandRequest{Command: "echo"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestLocalExecutorDynamicPwd(t *testing.T) {
 	}
 
 	exec := newLocalExecutor(cfg)
-	resp, err := exec.Execute(api.CommandRequest{Command: "pwd", ChatID: 42})
+	resp, err := exec.Execute(context.Background(), api.CommandRequest{Command: "pwd", ChatID: 42})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

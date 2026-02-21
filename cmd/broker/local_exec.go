@@ -24,7 +24,7 @@ func newLocalExecutor(cfg *BrokerConfig) *localExecutor {
 	return &localExecutor{cfg: cfg, chatCWD: newChatCWD()}
 }
 
-func (e *localExecutor) Execute(req api.CommandRequest) (*api.CommandResponse, error) {
+func (e *localExecutor) Execute(ctx context.Context, req api.CommandRequest) (*api.CommandResponse, error) {
 	cmdName := strings.TrimSpace(req.Command)
 	if cmdName == "" {
 		resp := api.CommandResponse{Ok: false, ExitCode: 1, Error: "empty command"}
@@ -42,7 +42,7 @@ func (e *localExecutor) Execute(req api.CommandRequest) (*api.CommandResponse, e
 		return &resp, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.cfg.LocalDefaultTimeoutSec)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(e.cfg.LocalDefaultTimeoutSec)*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, allowed.Exec, allowed.Args...)
