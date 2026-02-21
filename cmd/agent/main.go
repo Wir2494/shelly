@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -75,75 +74,8 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	chatCWD := newChatCWD()
-	mux.HandleFunc("/command", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		if cfg.AuthToken != "" {
-			if r.Header.Get("X-Auth-Token") != cfg.AuthToken {
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-		}
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var req api.CommandRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		cmdName := strings.TrimSpace(req.Command)
-		if cmdName == "" {
-			writeJSON(w, http.StatusBadRequest, api.CommandResponse{Ok: false, Error: "empty command"})
-			return
-		}
-		if isBlocked(cmdName, cfg.Execution.CommandBlocklist) {
-			writeJSON(w, http.StatusForbidden, api.CommandResponse{Ok: false, Error: "command blocked"})
-			return
-		}
-
-		if isDynamicAllowed(cmdName, cfg.Execution.DynamicAllowlist) {
-			resp := handleDynamicCommand(cfg, chatCWD, req.ChatID, cmdName, req.Args)
-			writeJSON(w, http.StatusOK, resp)
-			return
-		}
-
-		allowed, ok := cfg.Execution.CommandAllowlist[cmdName]
-		if !ok {
-			writeJSON(w, http.StatusForbidden, api.CommandResponse{Ok: false, Error: "command not allowed"})
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.Execution.DefaultTimeoutSec)*time.Second)
-		defer cancel()
-
-		cmd := exec.CommandContext(ctx, allowed.Exec, allowed.Args...)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-
-		err = cmd.Run()
-		resp := api.CommandResponse{}
-		if err == nil {
-			resp.Ok = true
-			resp.ExitCode = 0
-		} else {
-			resp.Ok = false
-			resp.ExitCode = exitCode(err)
-			resp.Error = err.Error()
-		}
-
-		resp.Stdout = limitOutput(stdout.String(), cfg.Execution.MaxOutputKB)
-		resp.Stderr = limitOutput(stderr.String(), cfg.Execution.MaxOutputKB)
-
-		writeJSON(w, http.StatusOK, resp)
-	})
+	exec := newAgentExecutor(cfg)
+	mux.HandleFunc("/command", newCommandHandler(cfg, exec))
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
@@ -339,6 +271,27 @@ func runCommand(baseAbs, execPath string, args []string, timeoutSec int, maxKB i
 
 	cmd := exec.CommandContext(ctx, execPath, args...)
 	cmd.Dir = baseAbs
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	resp := api.CommandResponse{}
+	if err == nil {
+		resp.Ok = true
+		resp.ExitCode = 0
+	} else {
+		resp.Ok = false
+		resp.ExitCode = exitCode(err)
+		resp.Error = err.Error()
+	}
+	resp.Stdout = limitOutput(stdout.String(), maxKB)
+	resp.Stderr = limitOutput(stderr.String(), maxKB)
+	return resp
+}
+
+func runAllowedCommand(ctx context.Context, allowed api.AllowedCommand, maxKB int) api.CommandResponse {
+	cmd := exec.CommandContext(ctx, allowed.Exec, allowed.Args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
