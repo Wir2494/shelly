@@ -18,7 +18,7 @@ func TestLocalExecutorTouchMkdirCountFind(t *testing.T) {
 				DefaultTimeoutSec: 2,
 				MaxOutputKB:       8,
 				BaseDir:           base,
-				DynamicAllowlist:  []string{"touch", "mkdir", "count", "find"},
+				DynamicAllowlist:  []string{"touch", "mkdir", "write", "append", "count", "find"},
 			},
 		},
 	}
@@ -50,6 +50,16 @@ func TestLocalExecutorTouchMkdirCountFind(t *testing.T) {
 	}
 	if !strings.Contains(resp.Stdout, filepath.Join(base, "Movies")) {
 		t.Fatalf("expected find result to include Movies dir")
+	}
+
+	// write and append
+	resp, err = exec.Execute(context.Background(), api.CommandRequest{Command: "write", Args: []string{"Movies/note.txt", "hello"}, ChatID: 1})
+	if err != nil || !resp.Ok {
+		t.Fatalf("write failed: %+v err=%v", resp, err)
+	}
+	resp, err = exec.Execute(context.Background(), api.CommandRequest{Command: "append", Args: []string{"Movies/note.txt", "world"}, ChatID: 1})
+	if err != nil || !resp.Ok {
+		t.Fatalf("append failed: %+v err=%v", resp, err)
 	}
 }
 

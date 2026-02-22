@@ -16,7 +16,7 @@ func TestAgentExecutorDynamicCommands(t *testing.T) {
 			DefaultTimeoutSec: 2,
 			MaxOutputKB:       8,
 			BaseDir:           base,
-			DynamicAllowlist:  []string{"touch", "mkdir", "count", "find"},
+			DynamicAllowlist:  []string{"touch", "mkdir", "write", "append", "count", "find"},
 		},
 	}
 	exec := newAgentExecutor(cfg)
@@ -43,5 +43,14 @@ func TestAgentExecutorDynamicCommands(t *testing.T) {
 	}
 	if !strings.Contains(resp.Stdout, filepath.Join(base, "Movies")) {
 		t.Fatalf("expected find result to include Movies dir")
+	}
+
+	resp = exec.Execute(context.Background(), api.CommandRequest{Command: "write", Args: []string{"Movies/note.txt", "hello"}, ChatID: 1})
+	if !resp.Ok {
+		t.Fatalf("write failed: %+v", resp)
+	}
+	resp = exec.Execute(context.Background(), api.CommandRequest{Command: "append", Args: []string{"Movies/note.txt", "world"}, ChatID: 1})
+	if !resp.Ok {
+		t.Fatalf("append failed: %+v", resp)
 	}
 }

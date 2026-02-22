@@ -128,6 +128,12 @@ func handleDynamicCommand(cfg *BrokerConfig, store *chatCWDStore, chatID int64, 
 	case "mkdir":
 		cwd := store.get(chatID, baseAbs)
 		return runSafeMkdir(baseAbs, cwd, args)
+	case "write":
+		cwd := store.get(chatID, baseAbs)
+		return runSafeWrite(baseAbs, cwd, args, false)
+	case "append":
+		cwd := store.get(chatID, baseAbs)
+		return runSafeWrite(baseAbs, cwd, args, true)
 	case "count":
 		cwd := store.get(chatID, baseAbs)
 		return runSafeCount(baseAbs, cwd, args)
@@ -214,6 +220,36 @@ func runSafeMkdir(baseAbs, cwdAbs string, args []string) api.CommandResponse {
 		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 	}
 	if err := os.MkdirAll(target, 0o755); err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
+}
+
+func runSafeWrite(baseAbs, cwdAbs string, args []string, appendMode bool) api.CommandResponse {
+	if len(args) < 2 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "write requires a file path and content"}
+	}
+	target, err := sanitizePath(baseAbs, cwdAbs, args[0])
+	if err != nil {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+	}
+	content := strings.Join(args[1:], " ")
+	if len(content) > 32*1024 {
+		return api.CommandResponse{Ok: false, ExitCode: 1, Error: "content too large"}
+	}
+	if appendMode {
+		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+		}
+		_, err = f.WriteString(content)
+		_ = f.Close()
+		if err != nil {
+			return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
+		}
+		return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}
+	}
+	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 		return api.CommandResponse{Ok: false, ExitCode: 1, Error: err.Error()}
 	}
 	return api.CommandResponse{Ok: true, ExitCode: 0, Stdout: target + "\n"}

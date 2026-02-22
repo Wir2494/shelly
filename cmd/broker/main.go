@@ -421,7 +421,7 @@ func stageRateLimit(ctx *pipelineContext) bool {
 func stageRoute(ctx *pipelineContext) bool {
 	if isCapabilityQuestion(ctx.msg.Text) {
 		logAudit(ctx, "help", "capabilities question", "ok")
-		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
+		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/write/append/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
 	}
 	if ctx.cfg.LLM.Enabled {
 		if ctx.llm == nil {
@@ -470,7 +470,7 @@ func stageRoute(ctx *pipelineContext) bool {
 	}
 	if cmd == "help" {
 		logAudit(ctx, "help", "direct help", "ok")
-		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
+		return sendReply(ctx, "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/write/append/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: "+strings.Join(ctx.cfg.Policy.CommandAllowlist, ", "))
 	}
 	ctx.cmd = cmd
 	ctx.args = args

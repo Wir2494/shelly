@@ -89,6 +89,8 @@ The local executor (or agent) supports safe, scoped filesystem commands under `b
 - `cd <dir>` (per-chat working directory)
 - `touch <file>`
 - `mkdir <dir>`
+- `write <file> <text>` (overwrite)
+- `append <file> <text>` (append)
 - `count [path]` (counts regular files in a directory, non-recursive)
 - `find <name>` (finds directories by name fragment up to depth 7)
 - `ping <host>` (restricted host format)

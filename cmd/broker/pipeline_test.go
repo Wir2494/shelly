@@ -115,7 +115,7 @@ func TestPipelineHelpSendsAllowlist(t *testing.T) {
 	if len(sender.calls) != 1 {
 		t.Fatalf("expected 1 send call, got %d", len(sender.calls))
 	}
-	expected := "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: " + strings.Join(cfg.Policy.CommandAllowlist, ", ")
+	expected := "Capabilities: run allowlisted commands (including safe file ops like ls/cd/cat/touch/mkdir/write/append/count/find and ping) and answer chat when LLM is enabled.\nAllowed commands: " + strings.Join(cfg.Policy.CommandAllowlist, ", ")
 	if sender.calls[0] != expected {
 		t.Fatalf("unexpected response: %q", sender.calls[0])
 	}
