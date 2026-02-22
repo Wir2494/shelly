@@ -7,3 +7,5 @@ configs/agent.json
 /agent
 /broker
 systemd/ssh-tunnel.service
+AUDIT_LOG.txt
+ADDING_COMMANDS.md
